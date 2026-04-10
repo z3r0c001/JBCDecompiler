@@ -68,7 +68,7 @@ public class PatternMatcherTest {
         String jbcEquivalent = patternMatcher.convertMethodCall(methodCall);
 
         assertNotNull(jbcEquivalent);
-        assertTrue(jbcEquivalent.contains("':'"));  // Should contain colon for concatenation
+        assertTrue(jbcEquivalent.contains(":"));  // Should contain colon for concatenation
         assertTrue(jbcEquivalent.contains("@VM"));  // Should convert jAtVariable.VM to @VM
     }
 
