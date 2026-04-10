@@ -1,10 +1,12 @@
-# TAFJ Reverse Tool
+# JBC Decompiler
 
 A reverse engineering tool that converts TAFJ (Temenos Application Framework for Java) compiled Java code back to native JBC (JBase Compiler) source code for Temenos T24/Transact applications.
 
 ## Overview
 
 This tool addresses the need to recover original JBC source code from TAFJ-compiled Java classes. When Temenos T24 applications are compiled using the TAFJ compiler, the original JBC source is transformed into Java bytecode. This tool performs the reverse translation, reconstructing readable and maintainable JBC source from the generated Java code.
+
+
 
 ## Design Features
 
