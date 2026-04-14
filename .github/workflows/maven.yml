@@ -30,6 +30,12 @@ jobs:
     - name: Build with Maven
       run: mvn -B package --file pom.xml
 
-    # Optional: Uploads the full dependency graph to GitHub to improve the quality of Dependabot alerts this repository can receive
-    - name: Update dependency graph
-      uses: advanced-security/maven-dependency-submission-action@571e99aab1055c2e71a1e2309b9691de18d6b7d6
+    - name: Create GitHub Release & Upload JAR
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: 1.0
+        name: Release 1.0
+        files: target/*.jar
+        generate_release_notes: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
