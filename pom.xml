@@ -78,7 +78,7 @@
                 <artifactId>javafx-maven-plugin</artifactId>
                 <version>0.0.8</version>
                 <configuration>
-                    <mainClass>com.tafj.reverse.Main</mainClass>
+                    <mainClass>com.tafj.reverse.Launcher</mainClass>
                 </configuration>
             </plugin>
             <plugin>
@@ -91,7 +91,7 @@
                     </descriptorRefs>
                     <archive>
                         <manifest>
-                            <mainClass>com.tafj.reverse.Main</mainClass>
+                            <mainClass>com.tafj.reverse.Launcher</mainClass>
                         </manifest>
                     </archive>
                 </configuration>
