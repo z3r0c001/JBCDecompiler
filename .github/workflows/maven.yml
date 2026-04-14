@@ -8,6 +8,8 @@
 
 name: Java CI with Maven
 
+permissions:
+  contents: write  # Required to create tags, releases, and upload assets
 on:
   push:
     branches: [ "main" ]
