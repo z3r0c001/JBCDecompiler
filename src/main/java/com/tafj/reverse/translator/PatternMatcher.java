@@ -194,6 +194,28 @@ public class PatternMatcher {
                 } else {
                     return varName;
                 }
+            } else if (isComponentRef && argCount >= 4) {
+                // Field reference with multi-value index: get(array, field, mv, default) → array<field,mv>
+                Expression fieldExpr = getCall.getArgument(1);
+                Expression mvExpr = getCall.getArgument(2);
+
+                String field = convertFieldExpression(fieldExpr);
+                String mv = convertExpression(mvExpr);
+
+                StringBuilder fields = new StringBuilder();
+                if (!field.equals("0")) {
+                    fields.append(field);
+                }
+                if (!mv.equals("0")) {
+                    if (fields.length() > 0) fields.append(",");
+                    fields.append(mv);
+                }
+
+                if (fields.length() > 0) {
+                    return varName + "<" + fields.toString() + ">";
+                } else {
+                    return varName;
+                }
             }
             // Otherwise, fall through to field access handling (component field reference)
         }
@@ -246,6 +268,13 @@ public class PatternMatcher {
                     // Convert ATMFRM_Foundation to ATMFRM.Foundation
                     componentName = convertUnderscoreToDots(componentName);
                     sb.append(componentName);
+                } else if (part.startsWith("__")) {
+                    // Double __ should become single _ (e.g., __eventType → _eventType)
+                    if (sb.length() > 0) {
+                        sb.append(".");
+                    }
+                    String fieldName = part.substring(2); // Remove leading __
+                    sb.append("_" + fieldName);
                 } else if (part.startsWith("_")) {
                     // Convert _AtmParameter_AtmParaAmtFmt to AtmParameter.AtmParaAmtFmt
                     if (sb.length() > 0) {
@@ -357,9 +386,15 @@ public class PatternMatcher {
     /**
      * Convert underscore-separated name to dot-separated
      * e.g., ATMFRM_Foundation → ATMFRM.Foundation
+     * Double underscores become single underscore: __ → _
      */
     private String convertUnderscoreToDots(String name) {
-        return name.replace("_", ".");
+        // First protect double underscores with a placeholder
+        String result = name.replace("__", "\u0000");
+        // Convert remaining underscores to dots
+        result = result.replace("_", ".");
+        // Restore placeholders to single underscores
+        return result.replace("\u0000", "_");
     }
 
     /**
@@ -443,20 +478,55 @@ public class PatternMatcher {
                 Expression startExpr = methodCall.getArgument(2);
                 Expression incExpr = methodCall.getArgument(3);
                 Expression varExpr = methodCall.getArgument(7);
-                
+
                 String value = convertExpression(valueExpr);
                 String array = convertExpression(arrayExpr);
                 String start = convertExpression(startExpr);
                 String inc = convertExpression(incExpr);
                 String variable = convertExpression(varExpr);
-                
+
                 return "LOCATE " + value + " IN " + array + "<" + start + "," + inc + "> SETTING " + variable + " THEN\n";
             }
             return "LOCATE(" + convertArguments(methodCall) + ")";
+        case "_TestFor_":
+            // TAFJ FOR loop condition - return null so WhileStmt visitor can handle it
+            return null;
         case "MINIMUM":
             return "MINIMUM(" + convertArguments(methodCall) + ")";
         case "MAXIMUM":
             return "MAXIMUM(" + convertArguments(methodCall) + ")";
+        case "CONVERT_STMT":
+            if (methodCall.getArguments().size() >= 6) {
+            Expression fromValueExpr = methodCall.getArgument(0);
+            Expression toValueExpr = methodCall.getArgument(1);
+            Expression arrayExpr = methodCall.getArgument(2);
+            Expression fmExpr = methodCall.getArgument(3);
+            Expression vmExpr = methodCall.getArgument(4);
+            Expression smExpr = methodCall.getArgument(5);
+
+            String fromValue = convertExpression(fromValueExpr);
+            String toValue = convertExpression(toValueExpr);
+            String array = convertExpression(arrayExpr);
+
+            String sm = smExpr.isNullLiteralExpr()?"":convertExpression(smExpr);
+            String vm = vmExpr.isNullLiteralExpr()?"":convertExpression(vmExpr);
+            String fm = fmExpr.isNullLiteralExpr()?"":convertExpression(fmExpr);
+            
+            if(!fm.isEmpty())
+            {
+                array = array + "<" + fm;
+                if(!vm.isEmpty())
+                {
+                    array = array + "," + vm;
+                    if(!sm.isEmpty())
+                        array = array + "," + sm;
+                }
+                array += ">";
+            }
+            return "CONVERT "+fromValue+" TO "+toValue+ " IN "+array;
+            }
+
+            return "CONVERT(" + convertArguments(methodCall) + ")";
         case "DCOUNT":
             // DCOUNT has 2 arguments: string and delimiter
             // Just convert arguments normally, jAtVariable.VM will be converted to @VM
@@ -502,8 +572,12 @@ public class PatternMatcher {
             // First, get the scope (the object being concatenated to)
             if (methodCall.getScope().isPresent()) {
                 Expression scope = methodCall.getScope().get();
+                
                 String scopeStr = convertExpression(scope);
-                concatResult.append(scopeStr);
+                if(scope instanceof FieldAccessExpr)
+                    concatResult.append(scopeStr).append(" = ").append(scopeStr);    
+                else
+                    concatResult.append(scopeStr);
             }
             
             // Then add the argument with colon prefix
@@ -611,11 +685,11 @@ public class PatternMatcher {
                     for (Expression arg : methodCall.getArguments()) {
                         if (arg instanceof CastExpr) {
                             CastExpr castexpr = (CastExpr) arg;
-                            argsList.add(convertVariableName(castexpr.getExpression().toString()));
+                            argsList.add(convertExpression(castexpr.getExpression()));
                         }
                     }
                     if (!argsList.isEmpty()) {
-                        finalStr += "." + convertedMethodName + "(" + String.join(",", argsList) + ")";
+                        finalStr += "." + convertedMethodName + "(" + String.join(", ", argsList) + ")";
                     } else {
                         // For non-CastExpr arguments, use convertArguments
                         finalStr += "." + convertedMethodName + "(" + convertArguments(methodCall) + ")";
@@ -644,7 +718,7 @@ public class PatternMatcher {
      * Convert method arguments to JBC format
      */
     private String convertArguments(MethodCallExpr methodCall) {
-        return convertArguments(methodCall, ",");
+        return convertArguments(methodCall, ", ");
     }
 
     /**
@@ -709,6 +783,10 @@ public class PatternMatcher {
             if (scope.equals("this") && field.startsWith("_")) {
                 return convertVariableName(field);
             }
+            // Handle component_XX_cl._Field pattern
+            if (scope.startsWith("component_")) {
+                return convertFieldExpression(expr);
+            }
             // Handle other field access
             return scope + "." + field;
         } else {
@@ -725,6 +803,11 @@ public class PatternMatcher {
 
                     if (str.startsWith("component_")) {
                         sb.append(str.substring(10).replaceAll("_\\d+_cl", "").replace("_", "."));
+                    } else if (str.startsWith("__")) {
+                        if (!sb.isEmpty()) {
+                            sb.append(".");
+                        }
+                        sb.append("_" + str.substring(2));
                     } else {
                         if (!sb.isEmpty()) {
                             sb.append(".");

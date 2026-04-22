@@ -146,33 +146,6 @@ public class TafjTranslator {
     private TafjMetadata extractTafjMetadata(String javaSource) {
         TafjMetadata metadata = new TafjMetadata();
 
-        // Extract <TAFJ-BP> - Base Pointer
-        int bpStart = javaSource.indexOf("<TAFJ-BP>");
-        if (bpStart > 0) {
-            int bpEnd = javaSource.indexOf("<\\TAFJ-BP>", bpStart);
-            if (bpEnd > 0) {
-                metadata.basePointer = javaSource.substring(bpStart + 11, bpEnd).trim();
-            }
-        }
-
-        // Extract <TAFJ-BPA> - Application/Mapping
-        int bpaStart = javaSource.indexOf("<TAFJ-BPA>");
-        if (bpaStart > 0) {
-            int bpaEnd = javaSource.indexOf("<\\TAFJ-BPA>", bpaStart);
-            if (bpaEnd > 0) {
-                metadata.application = javaSource.substring(bpaStart + 12, bpaEnd).trim();
-            }
-        }
-
-        // Extract <TAFJ-BN> - Base Name (program name)
-        int bnStart = javaSource.indexOf("<TAFJ-BN>");
-        if (bnStart > 0) {
-            int bnEnd = javaSource.indexOf("<\\TAFJ-BN>", bnStart);
-            if (bnEnd > 0) {
-                metadata.baseName = javaSource.substring(bnStart + 11, bnEnd).trim();
-            }
-        }
-
         return metadata;
     }
 

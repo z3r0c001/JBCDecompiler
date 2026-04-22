@@ -28,6 +28,9 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
     // Track variable assignments from method calls for expansion
     private Map<String, String> variableMethodCalls = new HashMap<>();
 
+    // Track loop counter variable initial values (for TAFJ _TestFor_ pattern)
+    private Map<String, String> loopCounterValues = new HashMap<>();
+
     public JbcVisitor(PatternMatcher patternMatcher) {
         this.patternMatcher = patternMatcher;
         this.jbcCode = new StringBuilder();
@@ -209,7 +212,18 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
         appendIndented(forLine + "\n");
 
         indentLevel++;
-        n.getBody().accept(this, arg);
+        // Process body, skipping TAFJ boilerplate at end (counter = this._Var)
+        if (n.getBody() instanceof BlockStmt) {
+            BlockStmt block = (BlockStmt) n.getBody();
+            for (Statement stmt : block.getStatements()) {
+                if (isForLoopEndBoilerplate(stmt)) {
+                    continue;
+                }
+                stmt.accept(this, arg);
+            }
+        } else {
+            n.getBody().accept(this, arg);
+        }
         indentLevel--;
 
         appendIndented("NEXT\n");
@@ -277,6 +291,138 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
             indentLevel--;
             appendIndented("REPEAT\n");
         }
+    }
+
+    @Override
+    public void visit(com.github.javaparser.ast.stmt.WhileStmt n, StringBuilder arg) {
+        Expression condition = n.getCondition();
+
+        // Detect TAFJ FOR loop pattern: while (this._TestFor_(counter, limit, step))
+        if (condition instanceof MethodCallExpr) {
+            MethodCallExpr condCall = (MethodCallExpr) condition;
+            if (condCall.getNameAsString().equals("_TestFor_") && condCall.getArguments().size() >= 3) {
+                Expression counterExpr = condCall.getArgument(0);
+                Expression limitExpr = condCall.getArgument(1);
+
+                String counterName = counterExpr.toString().trim();
+                String limitStr = patternMatcher.convertExpression(limitExpr);
+
+                // Look for the loop variable in the body: this._TargetVar = counter;
+                String loopVarName = null;
+                String startValue = null;
+
+                if (n.getBody() instanceof BlockStmt) {
+                    BlockStmt body = (BlockStmt) n.getBody();
+                    for (Statement stmt : body.getStatements()) {
+                        if (stmt instanceof ExpressionStmt) {
+                            ExpressionStmt exprStmt = (ExpressionStmt) stmt;
+                            if (exprStmt.getExpression() instanceof AssignExpr) {
+                                AssignExpr assign = (AssignExpr) exprStmt.getExpression();
+                                String assignStr = assign.getValue().toString().trim();
+                                // Check if RHS is the counter variable
+                                if (assignStr.equals(counterName)) {
+                                    // Found: targetVar = counter
+                                    loopVarName = patternMatcher.convertExpression(assign.getTarget());
+                                    // Look up the counter's initial value
+                                    if (loopCounterValues.containsKey(counterName)) {
+                                        startValue = loopCounterValues.get(counterName);
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (loopVarName != null && startValue != null) {
+                    // Build FOR line
+                    String forLine = "FOR " + loopVarName + " = " + startValue + " TO " + limitStr;
+                    appendIndented(forLine + "\n");
+
+                    indentLevel++;
+                    // Process body, skipping TAFJ boilerplate
+                    if (n.getBody() instanceof BlockStmt) {
+                        BlockStmt body = (BlockStmt) n.getBody();
+                        for (Statement stmt : body.getStatements()) {
+                            if (isTafjLoopBoilerplate(stmt)) continue;
+                            if (isForLoopIncrement(stmt, counterName)) continue;
+                            if (isForLoopEndBoilerplate(stmt)) continue;
+                            // Skip the assignment: loopVar = counter
+                            if (stmt instanceof ExpressionStmt) {
+                                ExpressionStmt exprStmt = (ExpressionStmt) stmt;
+                                if (exprStmt.getExpression() instanceof AssignExpr) {
+                                    AssignExpr assign = (AssignExpr) exprStmt.getExpression();
+                                    if (assign.getValue().toString().trim().equals(counterName)) continue;
+                                }
+                            }
+                            stmt.accept(this, arg);
+                        }
+                    } else {
+                        n.getBody().accept(this, arg);
+                    }
+                    indentLevel--;
+
+                    // Build NEXT line
+                    String nextLine = "NEXT " + loopVarName;
+                    appendIndented(nextLine + "\n");
+                    return;
+                }
+            }
+        }
+
+        // Fallback: treat as regular WHILE loop
+        String conditionStr = convertCondition(condition);
+        appendIndented("LOOP\n");
+        indentLevel++;
+        appendIndented("WHILE " + conditionStr + "\n");
+        indentLevel++;
+        n.getBody().accept(this, arg);
+        indentLevel--;
+        indentLevel--;
+        appendIndented("REPEAT\n");
+    }
+
+    /**
+     * Check if statement is the TAFJ for-loop increment (counter = _inc2(var, step))
+     */
+    private boolean isForLoopIncrement(Statement stmt, String counterName) {
+        if (stmt instanceof ExpressionStmt) {
+            ExpressionStmt exprStmt = (ExpressionStmt) stmt;
+            if (exprStmt.getExpression() instanceof AssignExpr) {
+                AssignExpr assign = (AssignExpr) exprStmt.getExpression();
+                String targetStr = assign.getTarget().toString().trim();
+                if (targetStr.equals(counterName)) {
+                    Expression value = assign.getValue();
+                    if (value instanceof MethodCallExpr) {
+                        MethodCallExpr methodCall = (MethodCallExpr) value;
+                        return methodCall.getNameAsString().equals("_inc2") ||
+                               methodCall.getNameAsString().equals("_inc");
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Check if statement is a TAFJ FOR loop end boilerplate (counter = this._Var)
+     * e.g., l2 = this._PTyp; l = this._Prt; l3 = this.tvar;
+     */
+    private boolean isForLoopEndBoilerplate(Statement stmt) {
+        if (stmt instanceof ExpressionStmt) {
+            ExpressionStmt exprStmt = (ExpressionStmt) stmt;
+            if (exprStmt.getExpression() instanceof AssignExpr) {
+                AssignExpr assign = (AssignExpr) exprStmt.getExpression();
+                String targetStr = assign.getTarget().toString().trim();
+                String valueStr = assign.getValue().toString().trim();
+                // Pattern: simpleVar = this._Something or simpleVar = this.something
+                // where simpleVar is a simple name (likely a loop counter like l, l2, jVar2, counter1)
+                if (targetStr.matches("[a-zA-Z]+\\d*") && valueStr.startsWith("this.")) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**
@@ -420,7 +566,19 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
                     // Check if initializer is a method call
                     if (init instanceof MethodCallExpr) {
                         MethodCallExpr methodCall = (MethodCallExpr) init;
-                        // Use convertMethodCallChain to get the full expanded method call
+                        // Check for jVarFactory.get((int)N) pattern → track N as loop counter value
+                        if (methodCall.getNameAsString().equals("get") && methodCall.getArguments().size() >= 1) {
+                            Expression initArg = methodCall.getArgument(0);
+                            if (initArg instanceof CastExpr) {
+                                initArg = ((CastExpr) initArg).getExpression();
+                            }
+                            if (initArg instanceof IntegerLiteralExpr || initArg instanceof LongLiteralExpr) {
+                                loopCounterValues.put(varName, patternMatcher.convertExpression(initArg));
+                                // Don't output variable declarations
+                                return;
+                            }
+                        }
+                        // General method call tracking
                         String convertedMethod = patternMatcher.convertMethodCall(methodCall);
                         if (convertedMethod == null) {
                             // Fallback: try converting the method call chain directly
@@ -431,6 +589,9 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
                             // Don't output variable declarations
                             return;
                         }
+                    } else if (init instanceof IntegerLiteralExpr || init instanceof LongLiteralExpr) {
+                        // Track literal initializers for loop counter detection (e.g., long l2 = 1L)
+                        loopCounterValues.put(varName, patternMatcher.convertExpression(init));
                     }
                 }
             }
@@ -497,50 +658,171 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
 
             // Handle set() as assignment
             if (methodName.equals("set")) {
-                // Check if set() contains get() with an array variable or tracked variable
+                // Check if set() contains fGet() call: set(target, fGet(array, fields...))
                 if (methodCall.getArguments().size() >= 2) {
                     Expression valueArg = methodCall.getArgument(1);
                     if (valueArg instanceof MethodCallExpr) {
-                        MethodCallExpr getCall = (MethodCallExpr) valueArg;
-                        if (getCall.getNameAsString().equals("get") && getCall.getArguments().size() >= 2) {
-                            // get(array, field) or get(array, field1, field2, ...)
-                            Expression arrayExpr = getCall.getArgument(0);
-                            Expression fieldExpr = getCall.getArgument(1);
+                        MethodCallExpr fGetCall = (MethodCallExpr) valueArg;
+                        if (fGetCall.getNameAsString().equals("fGet") && fGetCall.getArguments().size() >= 2) {
+                            // fGet(array, field1, field2, ...)
+                            Expression arrayExpr = fGetCall.getArgument(0);
+
+                            // Check if array argument is a tracked variable from method call assignments
                             String arrayStr = null;
-                            List<String> fields = null;
-
-                            // Check if field argument is a tracked array variable (contains field indices)
-                            if (fieldExpr instanceof NameExpr) {
-                                String varName = ((NameExpr) fieldExpr).getNameAsString();
-
-                                if (arrayContents.containsKey(varName)) {
-                                    // Field argument is a tracked array - expand it
-                                    fields = arrayContents.get(varName);
-                                    arrayStr = patternMatcher.convertExpression(arrayExpr);
-                                    // Don't remove from arrayContents - may be used again
-                                } else if (variableMethodCalls.containsKey(varName)) {
-                                    // Variable was assigned from method call
+                            if (arrayExpr instanceof NameExpr) {
+                                String varName = ((NameExpr) arrayExpr).getNameAsString();
+                                if (variableMethodCalls.containsKey(varName)) {
                                     arrayStr = variableMethodCalls.get(varName);
                                     variableMethodCalls.remove(varName);
                                 }
-                            } else {
-                                // Check if array argument is a tracked variable from method call assignments
-                                if (arrayExpr instanceof NameExpr) {
-                                    String varName = ((NameExpr) arrayExpr).getNameAsString();
+                            }
 
-                                    if (variableMethodCalls.containsKey(varName)) {
-                                        // Variable was assigned from method call
-                                        arrayStr = variableMethodCalls.get(varName);
-                                        variableMethodCalls.remove(varName);
+                            if (arrayStr == null) {
+                                // Fallback to normal conversion
+                                arrayStr = patternMatcher.convertExpression(arrayExpr);
+                            }
+
+                            // Build field list from remaining fGet() arguments (starting from index 1)
+                            StringBuilder fieldList = new StringBuilder();
+                            for (int i = 1; i < fGetCall.getArguments().size(); i++) {
+                                String fieldStr = patternMatcher.convertFieldExpression(fGetCall.getArgument(i));
+                                // Skip 0 values
+                                if (!fieldStr.equals("0")) {
+                                    if (fieldList.length() > 0) fieldList.append(",");
+                                    fieldList.append(fieldStr);
+                                }
+                            }
+
+                            if (fieldList.length() > 0) {
+                                arrayStr = arrayStr + "[" + fieldList.toString() + "]";
+                            }
+
+                            String targetStr = patternMatcher.convertExpression(methodCall.getArgument(0));
+                            String assignment = targetStr + " = " + arrayStr;
+                            appendIndented(assignment + "\n");
+                            return;
+                        }
+                    }
+                }
+
+                // Check if set() contains FIELD() with tracked variables
+                int argCount = methodCall.getArguments().size();
+                if (argCount >= 2) {
+                    Expression valueArg = methodCall.getArgument(argCount - 1);
+                    if (valueArg instanceof MethodCallExpr) {
+                        MethodCallExpr fieldCall = (MethodCallExpr) valueArg;
+                        if (fieldCall.getNameAsString().equals("FIELD") && fieldCall.getArguments().size() >= 2) {
+                            // FIELD(string, delimiter, fieldNum, ...)
+                            // Check if first argument is a get() call with array contents tracking
+                            Expression firstArgExpr = fieldCall.getArgument(0);
+                            String firstArg;
+                            
+                            if (firstArgExpr instanceof MethodCallExpr) {
+                                MethodCallExpr innerGetCall = (MethodCallExpr) firstArgExpr;
+                                if ((innerGetCall.getNameAsString().equals("get") || innerGetCall.getNameAsString().equals("fGet")) 
+                                    && innerGetCall.getArguments().size() >= 2) {
+                                    Expression innerArrayExpr = innerGetCall.getArgument(0);
+                                    Expression innerFieldExpr = innerGetCall.getArgument(1);
+                                    
+                                    // Check if second argument is a tracked array from indexed assignments
+                                    if (innerFieldExpr instanceof NameExpr && arrayContents != null) {
+                                        String varName = ((NameExpr) innerFieldExpr).getNameAsString();
+                                        if (arrayContents.containsKey(varName)) {
+                                            List<String> fields = arrayContents.get(varName);
+                                            StringBuilder fieldList = new StringBuilder();
+                                            for (int i = 0; i < fields.size(); i++) {
+                                                String field = fields.get(i);
+                                                if (!field.equals("0") && !field.isEmpty()) {
+                                                    if (fieldList.length() > 0) fieldList.append(",");
+                                                    fieldList.append(field);
+                                                }
+                                            }
+                                            
+                                            String innerArrayConverted = patternMatcher.convertExpression(innerArrayExpr);
+                                            if (fieldList.length() > 0) {
+                                                firstArg = innerArrayConverted + "<" + fieldList.toString() + ">";
+                                            } else {
+                                                firstArg = innerArrayConverted;
+                                            }
+                                        } else {
+                                            firstArg = expandTrackedVariable(firstArgExpr);
+                                        }
+                                    } else {
+                                        firstArg = expandTrackedVariable(firstArgExpr);
                                     }
+                                } else {
+                                    firstArg = expandTrackedVariable(firstArgExpr);
+                                }
+                            } else {
+                                firstArg = expandTrackedVariable(firstArgExpr);
+                            }
+
+                            // Build the FIELD call with expanded first argument
+                            StringBuilder argsBuilder = new StringBuilder();
+                            argsBuilder.append(firstArg);
+                            for (int i = 1; i < fieldCall.getArguments().size(); i++) {
+                                argsBuilder.append(", ");
+                                argsBuilder.append(patternMatcher.convertExpression(fieldCall.getArgument(i)));
+                            }
+
+                            String targetStr = patternMatcher.convertExpression(methodCall.getArgument(0));
+                            String assignment = targetStr + " = FIELD(" + argsBuilder.toString() + ")";
+                            appendIndented(assignment + "\n");
+                            return;
+                        }
+                    }
+                }
+
+                // Check if set() contains get() with an array variable or tracked variable
+                // Use PatternMatcher with arrayContents to handle nested get() calls (e.g., inside FIELD)
+                if (argCount >= 2) {
+                    Expression valueArg = methodCall.getArgument(argCount - 1);
+                    if (valueArg instanceof MethodCallExpr) {
+                        MethodCallExpr getCall = (MethodCallExpr) valueArg;
+                        String getMethodName = getCall.getNameAsString();
+                        // Check if value is a get() call with an array variable that can be expanded
+                        if ((getMethodName.equals("get") || getMethodName.equals("fGet")) && getCall.getArguments().size() >= 2) {
+                            Expression arrayExpr = getCall.getArgument(0);
+                            Expression fieldExpr = getCall.getArgument(1);
+
+                            // Check if first argument (array) is a tracked variable from method call
+                            String arrayStr = null;
+                            if (arrayExpr instanceof NameExpr) {
+                                String varName = ((NameExpr) arrayExpr).getNameAsString();
+                                if (variableMethodCalls.containsKey(varName)) {
+                                    arrayStr = variableMethodCalls.get(varName);
+                                    variableMethodCalls.remove(varName);
                                 }
                             }
 
                             if (arrayStr != null) {
-                                String targetStr = patternMatcher.convertExpression(methodCall.getArgument(0));
+                                // Build field list from remaining get() arguments
+                                StringBuilder fieldList = new StringBuilder();
+                                for (int i = 1; i < getCall.getArguments().size(); i++) {
+                                    String fieldStr = patternMatcher.convertFieldExpression(getCall.getArgument(i));
+                                    // Skip 0 values
+                                    if (!fieldStr.equals("0")) {
+                                        if (fieldList.length() > 0) fieldList.append(",");
+                                        fieldList.append(fieldStr);
+                                    }
+                                }
 
-                                if (fields != null && !fields.isEmpty()) {
-                                    // Build field list from tracked array contents, skipping 0 values
+                                if (fieldList.length() > 0) {
+                                    arrayStr = arrayStr + "<" + fieldList.toString() + ">";
+                                }
+
+                                String targetStr = patternMatcher.convertExpression(methodCall.getArgument(0));
+                                String assignment = targetStr + " = " + arrayStr;
+                                appendIndented(assignment + "\n");
+                                return;
+                            }
+
+                            // Check if second argument is a tracked array from indexed assignments (objectArray2 pattern)
+                            if (fieldExpr instanceof NameExpr && arrayContents != null) {
+                                String varName = ((NameExpr) fieldExpr).getNameAsString();
+                                if (arrayContents.containsKey(varName)) {
+                                    // get(array, trackedArray) → expand
+                                    List<String> fields = arrayContents.get(varName);
                                     StringBuilder fieldList = new StringBuilder();
                                     for (int i = 0; i < fields.size(); i++) {
                                         String field = fields.get(i);
@@ -549,60 +831,26 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
                                             fieldList.append(field);
                                         }
                                     }
+
+                                    // Convert array expression
+                                    String arrayConverted = patternMatcher.convertExpression(arrayExpr);
                                     if (fieldList.length() > 0) {
-                                        arrayStr = arrayStr + "<" + fieldList.toString() + ">";
+                                        arrayStr = arrayConverted + "<" + fieldList.toString() + ">";
+                                    } else {
+                                        arrayStr = arrayConverted;
                                     }
-                                } else if (getCall.getArguments().size() >= 2) {
-                                    // Build field list from remaining get() arguments (starting from index 1)
-                                    StringBuilder fieldList = new StringBuilder();
-                                    for (int i = 1; i < getCall.getArguments().size(); i++) {
-                                        String fieldStr = patternMatcher.convertFieldExpression(getCall.getArgument(i));
-                                        // Skip 0 values
-                                        if (!fieldStr.equals("0")) {
-                                            if (fieldList.length() > 0) fieldList.append(",");
-                                            fieldList.append(fieldStr);
-                                        }
-                                    }
-                                    if (fieldList.length() > 0) {
-                                        arrayStr = arrayStr + "<" + fieldList.toString() + ">";
-                                    }
+
+                                    String targetStr = patternMatcher.convertExpression(methodCall.getArgument(0));
+                                    String assignment = targetStr + " = " + arrayStr;
+                                    appendIndented(assignment + "\n");
+                                    return;
                                 }
-
-                                String assignment = targetStr + " = " + arrayStr;
-                                appendIndented(assignment + "\n");
-                                return;
                             }
                         }
                     }
                 }
 
-                // Fallback to standard set() conversion
-                // Check for op_add(var, N) pattern → var += N
-                if (methodCall.getArguments().size() >= 2) {
-                    Expression valueArg = methodCall.getArgument(1);
-                    if (valueArg instanceof MethodCallExpr) {
-                        MethodCallExpr opCall = (MethodCallExpr) valueArg;
-                        String opName = opCall.getNameAsString();
-                        
-                        if ((opName.equals("op_add") || opName.equals("op_sub")) && opCall.getArguments().size() >= 2) {
-                            Expression targetExpr = methodCall.getArgument(0);
-                            Expression leftExpr = opCall.getArgument(0);
-                            Expression rightExpr = opCall.getArgument(1);
-                            
-                            // Check if target matches left side of op (self-modification)
-                            String targetStr = patternMatcher.convertExpression(targetExpr);
-                            String leftStr = patternMatcher.convertExpression(leftExpr);
-                            String rightStr = patternMatcher.convertExpression(rightExpr);
-                            
-                            if (targetStr.equals(leftStr)) {
-                                String operator = opName.equals("op_add") ? "+=" : "-=";
-                                appendIndented(targetStr + " " + operator + " " + rightStr + "\n");
-                                return;
-                            }
-                        }
-                    }
-                }
-                
+                // Standard multi-field or simple set() conversion
                 String assignment = patternMatcher.convertSetCall(methodCall, variableMethodCalls);
                 if (assignment != null) {
                     appendIndented(assignment + "\n");
@@ -771,16 +1019,231 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
 
     private String convertBinaryOpWithAnd(MethodCallExpr opMethod) {
         if (opMethod.getArguments().size() < 2) return "";
-        String left = convertCondition(opMethod.getArgument(0));
-        String right = convertCondition(opMethod.getArgument(1));
+        String left = convertConditionWithTrackedVariables(opMethod.getArgument(0));
+        String right = convertConditionWithTrackedVariables(opMethod.getArgument(1));
         return left + " AND " + right;
     }
 
     private String convertBinaryOpWithOr(MethodCallExpr opMethod) {
         if (opMethod.getArguments().size() < 2) return "";
-        String left = convertCondition(opMethod.getArgument(0));
-        String right = convertCondition(opMethod.getArgument(1));
+        String left = convertConditionWithTrackedVariables(opMethod.getArgument(0));
+        String right = convertConditionWithTrackedVariables(opMethod.getArgument(1));
         return left + " OR " + right;
+    }
+
+    /**
+     * Convert a condition expression, expanding tracked variables if applicable.
+     */
+    private String convertConditionWithTrackedVariables(Expression expr) {
+        // Check if this is a simple variable reference that's tracked
+        if (expr instanceof NameExpr) {
+            String varName = ((NameExpr) expr).getNameAsString();
+            if (variableMethodCalls.containsKey(varName)) {
+                // Expand the tracked variable
+                String expanded = variableMethodCalls.get(varName);
+                variableMethodCalls.remove(varName);
+                return expanded;
+            }
+        }
+
+        // Handle method calls that may contain tracked variables as arguments
+        if (expr instanceof MethodCallExpr) {
+            MethodCallExpr methodCall = (MethodCallExpr) expr;
+            String methodName = methodCall.getNameAsString();
+
+            // For FIELD - expand tracked variables in arguments and rebuild the call
+            if (methodName.equals("FIELD")) {
+                StringBuilder argsBuilder = new StringBuilder();
+                for (int i = 0; i < methodCall.getArguments().size(); i++) {
+                    if (i > 0) argsBuilder.append(", ");
+                    Expression arg = methodCall.getArgument(i);
+                    // Recursively expand tracked variables in arguments
+                    String expandedArg = expandTrackedVariable(arg);
+                    argsBuilder.append(expandedArg);
+                }
+                return methodName + "(" + argsBuilder.toString() + ")";
+            }
+
+            // For get() and fGet() - convert to JBC array access syntax with tracked variable expansion
+            if (methodName.equals("get") || methodName.equals("fGet")) {
+                int argCount = methodCall.getArguments().size();
+                if (argCount < 2) {
+                    return patternMatcher.convertMethodCall(methodCall);
+                }
+
+                // Expand tracked variables in arguments
+                Expression arrayExpr = methodCall.getArgument(0);
+                String arrayStr = expandTrackedVariable(arrayExpr);
+
+                // Check if this is multi-value array access (4 arguments: array, mv, sv, default)
+                if (argCount >= 3) {
+                    Expression arg1Expr = methodCall.getArgument(1);
+                    boolean isComponentRef = arg1Expr.toString().startsWith("component_") ||
+                                             arg1Expr instanceof FieldAccessExpr ||
+                                             arg1Expr instanceof MethodCallExpr;
+
+                    if (!isComponentRef &&
+                        (arg1Expr instanceof IntegerLiteralExpr ||
+                         arg1Expr instanceof LongLiteralExpr ||
+                         arg1Expr instanceof NameExpr)) {
+                        // Multi-value access: get(array, mv, sv, default) → array<mv,sv>
+                        String mv = expandTrackedVariable(methodCall.getArgument(1));
+                        String sv = expandTrackedVariable(methodCall.getArgument(2));
+
+                        StringBuilder fields = new StringBuilder();
+                        if (!mv.equals("0")) {
+                            fields.append(mv);
+                        }
+                        if (!sv.equals("0")) {
+                            if (fields.length() > 0) fields.append(",");
+                            fields.append(sv);
+                        }
+
+                        if (fields.length() > 0) {
+                            return arrayStr + "<" + fields.toString() + ">";
+                        } else {
+                            return arrayStr;
+                        }
+                    } else if (isComponentRef && argCount >= 4) {
+                        // Field reference with multi-value index: get(array, field, mv, default) → array<field,mv>
+                        String field = expandTrackedVariable(methodCall.getArgument(1));
+                        String mv = expandTrackedVariable(methodCall.getArgument(2));
+                        
+                        StringBuilder fields = new StringBuilder();
+                        if (!field.equals("0")) {
+                            fields.append(field);
+                        }
+                        if (!mv.equals("0")) {
+                            if (fields.length() > 0) fields.append(",");
+                            fields.append(mv);
+                        }
+
+                        if (fields.length() > 0) {
+                            return arrayStr + "<" + fields.toString() + ">";
+                        } else {
+                            return arrayStr;
+                        }
+                    }
+                }
+
+                // Standard field access: get(array, field) → array<field>
+                String fieldName = expandTrackedVariable(methodCall.getArgument(1));
+                return arrayStr + "<" + fieldName + ">";
+            }
+
+            // For comparison ops - recursively expand tracked variables in arguments
+            if (methodName.equals("op_equal") || methodName.equals("op_ne") || methodName.equals("op_gt") ||
+                methodName.equals("op_lt") || methodName.equals("op_ge") || methodName.equals("op_le") ||
+                methodName.equals("op_match")) {
+                String jbcOp = methodName.substring(3).toUpperCase().replace("EQUAL", "EQ");
+                String left = expandTrackedVariable(methodCall.getArgument(0));
+                String right = expandTrackedVariable(methodCall.getArgument(1));
+                return left + " " + jbcOp + " " + right;
+            }
+        }
+
+        // Fallback to normal condition conversion
+        return convertCondition(expr);
+    }
+
+    /**
+     * Expand a tracked variable in an expression argument.
+     */
+    private String expandTrackedVariable(Expression arg) {
+        // Check if this is a tracked variable
+        if (arg instanceof NameExpr) {
+            String varName = ((NameExpr) arg).getNameAsString();
+            if (variableMethodCalls.containsKey(varName)) {
+                String expanded = variableMethodCalls.get(varName);
+                variableMethodCalls.remove(varName);
+                return expanded;
+            }
+        } else if (arg instanceof MethodCallExpr) {
+            // Recursively process method calls to expand tracked variables
+            MethodCallExpr methodCall = (MethodCallExpr) arg;
+            String methodName = methodCall.getNameAsString();
+
+            // For get() and fGet() - convert to JBC array access syntax
+            if (methodName.equals("get") || methodName.equals("fGet")) {
+                int argCount = methodCall.getArguments().size();
+                if (argCount < 2) {
+                    return patternMatcher.convertExpression(arg);
+                }
+
+                // Expand tracked variables in arguments
+                Expression arrayExpr = methodCall.getArgument(0);
+                String arrayStr = expandTrackedVariable(arrayExpr);
+
+                // Check if this is multi-value array access (4 arguments: array, mv, sv, default)
+                if (argCount >= 3) {
+                    Expression arg1Expr = methodCall.getArgument(1);
+                    boolean isComponentRef = arg1Expr.toString().startsWith("component_") ||
+                                             arg1Expr instanceof FieldAccessExpr ||
+                                             arg1Expr instanceof MethodCallExpr;
+
+                    if (!isComponentRef &&
+                        (arg1Expr instanceof IntegerLiteralExpr ||
+                         arg1Expr instanceof LongLiteralExpr ||
+                         arg1Expr instanceof NameExpr)) {
+                        // Multi-value access: get(array, mv, sv, default) → array<mv,sv>
+                        String mv = expandTrackedVariable(methodCall.getArgument(1));
+                        String sv = expandTrackedVariable(methodCall.getArgument(2));
+
+                        StringBuilder fields = new StringBuilder();
+                        if (!mv.equals("0")) {
+                            fields.append(mv);
+                        }
+                        if (!sv.equals("0")) {
+                            if (fields.length() > 0) fields.append(",");
+                            fields.append(sv);
+                        }
+
+                        if (fields.length() > 0) {
+                            return arrayStr + "<" + fields.toString() + ">";
+                        } else {
+                            return arrayStr;
+                        }
+                    } else if (isComponentRef && argCount >= 4) {
+                        // Field reference with multi-value index: get(array, field, mv, default) → array<field,mv>
+                        String field = expandTrackedVariable(methodCall.getArgument(1));
+                        String mv = expandTrackedVariable(methodCall.getArgument(2));
+                        
+                        StringBuilder fields = new StringBuilder();
+                        if (!field.equals("0")) {
+                            fields.append(field);
+                        }
+                        if (!mv.equals("0")) {
+                            if (fields.length() > 0) fields.append(",");
+                            fields.append(mv);
+                        }
+
+                        if (fields.length() > 0) {
+                            return arrayStr + "<" + fields.toString() + ">";
+                        } else {
+                            return arrayStr;
+                        }
+                    }
+                }
+
+                // Standard field access: get(array, field) → array<field>
+                String fieldName = expandTrackedVariable(methodCall.getArgument(1));
+                return arrayStr + "<" + fieldName + ">";
+            }
+
+            // For FIELD - expand tracked variables in arguments
+            if (methodName.equals("FIELD")) {
+                StringBuilder argsBuilder = new StringBuilder();
+                for (int i = 0; i < methodCall.getArguments().size(); i++) {
+                    if (i > 0) argsBuilder.append(", ");
+                    Expression innerArg = methodCall.getArgument(i);
+                    String expandedArg = expandTrackedVariable(innerArg);
+                    argsBuilder.append(expandedArg);
+                }
+                return methodName + "(" + argsBuilder.toString() + ")";
+            }
+        }
+        // Normal conversion
+        return patternMatcher.convertExpression(arg);
     }
     private String convertAssignment(AssignExpr assignExpr) {
 //        System.out.println("convertAssignment :" + assignExpr.toString());
@@ -804,45 +1267,44 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
     }
 
     private String convertExpression(Expression expr) {
-//        System.out.println("convertExpression :" + expr.toString());
-        if (expr instanceof NameExpr) {
-            String name = ((NameExpr) expr).getNameAsString();
-            return patternMatcher.convertVariableName(name);
-        } else if (expr instanceof MethodCallExpr) {
-            return patternMatcher.convertMethodCall((MethodCallExpr) expr);
-        } else if (expr instanceof StringLiteralExpr) {
-            return "\"" + ((StringLiteralExpr) expr).getValue() + "\"";
-        } else if (expr instanceof IntegerLiteralExpr) {
-            return ((IntegerLiteralExpr) expr).getValue();
-        } else if (expr instanceof FieldAccessExpr) {
-            // Delegate to PatternMatcher for proper FieldAccessExpr handling (this._VAR, etc.)
-            return patternMatcher.convertExpression(expr);
-        } else if (expr instanceof BooleanLiteralExpr) {
-            return ((BooleanLiteralExpr) expr).getValue() ? "1" : "0";
-        } else if (expr instanceof UnaryExpr) {
-            // Handle negation: !expr
-            UnaryExpr unary = (UnaryExpr) expr;
-            String inner = convertExpression(unary.getExpression());
-            if (unary.getOperator() == UnaryExpr.Operator.LOGICAL_COMPLEMENT) {
-                return "!(" + inner + ")";
-            }
-            return expr.toString();
-        } else if (expr instanceof BinaryExpr) {
-            // Handle || (OR) and && (AND) operators
-            BinaryExpr binary = (BinaryExpr) expr;
-            String left = convertExpression(binary.getLeft());
-            String right = convertExpression(binary.getRight());
-            switch (binary.getOperator()) {
-                case BINARY_OR: return left + " OR " + right;
-                case BINARY_AND: return left + " AND " + right;
-                case EQUALS: return left + " EQ " + right;
-                case NOT_EQUALS: return left + " NE " + right;
-                default: return expr.toString();
-            }
-        } else {
-            return expr.toString();
+    if (expr instanceof NameExpr) {
+        String name = ((NameExpr) expr).getNameAsString();
+        return patternMatcher.convertVariableName(name);
+    } else if (expr instanceof MethodCallExpr) {
+        return patternMatcher.convertMethodCall((MethodCallExpr) expr);
+    } else if (expr instanceof StringLiteralExpr) {
+        return "\"" + ((StringLiteralExpr) expr).getValue() + "\"";
+    } else if (expr instanceof IntegerLiteralExpr) {
+        return ((IntegerLiteralExpr) expr).getValue();
+    } else if (expr instanceof FieldAccessExpr) {
+        // Delegate to PatternMatcher for proper FieldAccessExpr handling (this._VAR, etc.)
+        return patternMatcher.convertExpression(expr);
+    } else if (expr instanceof BooleanLiteralExpr) {
+        return ((BooleanLiteralExpr) expr).getValue() ? "1" : "0";
+    } else if (expr instanceof UnaryExpr) {
+        // Handle negation: !expr
+        UnaryExpr unary = (UnaryExpr) expr;
+        String inner = convertExpression(unary.getExpression());
+        if (unary.getOperator() == UnaryExpr.Operator.LOGICAL_COMPLEMENT) {
+            return "!(" + inner + ")";
         }
+        return expr.toString();
+    } else if (expr instanceof BinaryExpr) {
+        // Handle || (OR) and && (AND) operators
+        BinaryExpr binary = (BinaryExpr) expr;
+        String left = convertExpression(binary.getLeft());
+        String right = convertExpression(binary.getRight());
+        switch (binary.getOperator()) {
+            case BINARY_OR: return left + " OR " + right;
+            case BINARY_AND: return left + " AND " + right;
+            case EQUALS: return left + " EQ " + right;
+            case NOT_EQUALS: return left + " NE " + right;
+            default: return expr.toString();
+        }
+    } else {
+        return expr.toString();
     }
+}
 
     private void appendIndented(String text) {
         if (text.startsWith("\n"))

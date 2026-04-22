@@ -1,7 +1,6 @@
 package com.tafj.reverse.translator;
 
 import com.github.javaparser.JavaParser;
-import com.github.javaparser.ast.body.MethodDeclaration;
 
 public class LocateSwitchTest {
 
