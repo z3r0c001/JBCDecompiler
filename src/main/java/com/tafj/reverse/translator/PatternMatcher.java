@@ -3,6 +3,7 @@ package com.tafj.reverse.translator;
 import com.github.javaparser.ast.expr.*;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.*;
@@ -11,6 +12,10 @@ public class PatternMatcher {
 
     // Track array contents for expansion in get() calls
     private Map<String, List<String>> arrayContents = null;
+
+    // Track variable assignments from method calls for expansion
+    Map<String, String> variableMethodCalls = new HashMap<>();
+
 
     /**
      * Set the array contents map for variable expansion
@@ -57,19 +62,9 @@ public class PatternMatcher {
     }
 
     /**
-     * Convert set() call to JBC assignment
-     * Handles two patterns:
-     * - set(_VAR, value) → VAR = value
-     * - set(_VAR, field1, field2, ..., value) → VAR<field1,field2,...> = value
-     */
-    public String convertSetCall(MethodCallExpr setCall) {
-        return convertSetCall(setCall, null);
-    }
-
-    /**
      * Convert set() call to JBC assignment with tracked variable expansion
      */
-    public String convertSetCall(MethodCallExpr setCall, Map<String, String> variableMethodCalls) {
+    public String convertSetCall(MethodCallExpr setCall) {
         int argCount = setCall.getArguments().size();
         if (argCount < 2)
             return null;
@@ -304,7 +299,7 @@ public class PatternMatcher {
                 componentName = convertUnderscoreToDots(componentName);
 
                 // Check if there's a field being accessed on the result
-                if (methodCall.getScope().isPresent()) {
+                if (methodCall.hasScope()) {
                     String scopeStr = methodCall.getScope().get().toString();
                     if (scopeStr.startsWith("_")) {
                         String fieldName = scopeStr.substring(1);
@@ -345,7 +340,7 @@ public class PatternMatcher {
         StringBuilder result = new StringBuilder();
         
         // Build the scope chain
-        if (methodCall.getScope().isPresent()) {
+        if (methodCall.hasScope()) {
             Expression scope = methodCall.getScope().get();
             String scopeStr = scope.toString();
             
@@ -565,26 +560,37 @@ public class PatternMatcher {
             }
             return "NOT";
         case "concat":
-            // For .concat() method - need to include the scope (what's being concatenated to)
-            // e.g., op_cat(A,B).concat(C) should be A:B:C
+            // For .concat() method - All segments (scope + arguments) should be joined by ':'
             StringBuilder concatResult = new StringBuilder();
+
             
-            // First, get the scope (the object being concatenated to)
-            if (methodCall.getScope().isPresent()) {
+            // 1. Handle the scope (the object being concatenated to). Convert this first.
+            if (methodCall.hasScope()) {
                 Expression scope = methodCall.getScope().get();
-                
                 String scopeStr = convertExpression(scope);
-                if(scope instanceof FieldAccessExpr)
-                    concatResult.append(scopeStr).append(" = ").append(scopeStr);    
-                else
-                    concatResult.append(scopeStr);
+                concatResult.append(scopeStr);
             }
-            
-            // Then add the argument with colon prefix
-            if (methodCall.getArguments().size() > 0) {
-                concatResult.append(":").append(convertExpression(methodCall.getArgument(0)));
+
+            // 2. Append arguments, separated by ':', ensuring proper sequence continuation.
+            StringBuilder argsBuilder = new StringBuilder();
+            int argIndex = 0;
+            for (Expression arg : methodCall.getArguments()) {
+                String convertedArg = convertExpression(arg);
+                if (argIndex > 0) {
+                    argsBuilder.append(":");
+                }
+                argsBuilder.append(convertedArg);
+                argIndex++;
             }
-            return concatResult.toString();
+
+            // If we have both a scope and arguments, combine them with an initial ':' separator.
+            if (concatResult.length() > 0 && argsBuilder.length() > 0) {
+                 return concatResult.toString() + ":" + argsBuilder.toString();
+            } else if (argsBuilder.length() > 0) {
+                // If no scope, just return the concatenated arguments string.
+                return argsBuilder.toString();
+            }
+            return "";
         case "get":
             return convertGetCall(methodCall);
         case "set":
@@ -744,7 +750,13 @@ public class PatternMatcher {
             return "";
 
         if (expr instanceof NameExpr) {
-            return convertVariableName(((NameExpr) expr).getNameAsString());
+            String varName = ((NameExpr) expr).getNameAsString();
+
+            if (variableMethodCalls != null && variableMethodCalls.containsKey(varName)) {
+                return variableMethodCalls.get(varName);
+            }
+
+            return convertVariableName(varName);
         } else if (expr instanceof StringLiteralExpr) {
             return "'" + ((StringLiteralExpr) expr).getValue() + "'";
         } else if (expr instanceof IntegerLiteralExpr) {

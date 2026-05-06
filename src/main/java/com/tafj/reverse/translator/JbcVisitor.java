@@ -1,15 +1,10 @@
 package com.tafj.reverse.translator;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 import com.github.javaparser.ast.CompilationUnit;
-import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
-import com.github.javaparser.ast.body.MethodDeclaration;
-import com.github.javaparser.ast.comments.BlockComment;
-import com.github.javaparser.ast.comments.LineComment;
+import com.github.javaparser.ast.body.*;
+import com.github.javaparser.ast.comments.*;
 import com.github.javaparser.ast.expr.*;
 import com.github.javaparser.ast.stmt.*;
 import com.github.javaparser.ast.visitor.VoidVisitorAdapter;
@@ -24,9 +19,6 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
 
     // Track array element assignments for expansion in get() calls
     private Map<String, List<String>> arrayContents = new HashMap<>();
-
-    // Track variable assignments from method calls for expansion
-    private Map<String, String> variableMethodCalls = new HashMap<>();
 
     // Track loop counter variable initial values (for TAFJ _TestFor_ pattern)
     private Map<String, String> loopCounterValues = new HashMap<>();
@@ -59,6 +51,43 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
         // Visit only types (classes/interfaces), skip comments and other nodes
         for (var type : n.getTypes()) {
             type.accept(this, arg);
+        }
+    }
+
+    @Override
+    public void visit(AssignExpr n, StringBuilder arg) {
+        // This is CRITICAL for tracking intermediate variables like 'charArray'
+        if (n.getOperator() == AssignExpr.Operator.ASSIGN) {
+            Expression target = n.getTarget();
+            Expression value = n.getValue();
+
+            // Only track assignments to local variables or fields that are simple enough
+            String targetStr = convertExpression(target);
+            String valueStr = convertExpression(value);
+
+            // Skip TAFJ infrastructure assignments
+            if (targetStr.contains("Sys.PostGlobus") || 
+                targetStr.equals("this._Sys_PostGlobus") ||
+                targetStr.contains("Sys.ReturnTo") || 
+                targetStr.equals("this._Sys_ReturnTo")) {
+                super.visit(n, arg);
+                return;
+            }
+
+            // Track the variable if the target is a simple name (local var)
+            if (target instanceof NameExpr) {
+                String varName = ((NameExpr) target).getNameAsString();
+                // Only track if the value is a method call or complex expression, not a literal
+                if (!(value instanceof StringLiteralExpr) && !(value instanceof IntegerLiteralExpr)) {
+                    patternMatcher.variableMethodCalls.put(varName, valueStr);
+                }
+            }
+            
+            // For the purpose of the final output, we might also want to emit the assignment if it's a field/setter
+            // But the bug report focuses on the final assignment to _SEL_CMD
+            super.visit(n, arg);
+        } else {
+            super.visit(n, arg);
         }
     }
 
@@ -543,6 +572,7 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
     public void visit(ExpressionStmt n, StringBuilder arg) {
         Expression expr = n.getExpression();
 
+        /*
         // Skip TAFJ loop boilerplate assignments after WHILE loop conversion
         // These are: _loop_ = true, _isBreak_ = false, _isContinue_ = false
         if (expr instanceof AssignExpr) {
@@ -553,6 +583,7 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
                 return;
             }
         }
+            */
 
         // Track variable assignments from method calls: Type var = this.getComponent().method();
         if (expr instanceof VariableDeclarationExpr) {
@@ -585,7 +616,7 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
                             convertedMethod = patternMatcher.convertVariableOrMethodCall(methodCall);
                         }
                         if (convertedMethod != null) {
-                            variableMethodCalls.put(varName, convertedMethod);
+                            patternMatcher.variableMethodCalls.put(varName, convertedMethod);
                             // Don't output variable declarations
                             return;
                         }
@@ -601,6 +632,11 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
         if (expr instanceof AssignExpr) {
             AssignExpr assign = (AssignExpr) expr;
             Expression target = assign.getTarget();
+            String targetStr = assign.getTarget().toString();
+            if (targetStr.contains("_loop_") || targetStr.contains("_isBreak_") || targetStr.contains("_isContinue_")) {
+                // Skip TAFJ loop boilerplate assignments after WHILE loop conversion
+                return;
+            }
             
             // Check if target is an array access: array[index] or this.array[index]
             Expression arrayNameExpr = null;
@@ -671,9 +707,9 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
                             String arrayStr = null;
                             if (arrayExpr instanceof NameExpr) {
                                 String varName = ((NameExpr) arrayExpr).getNameAsString();
-                                if (variableMethodCalls.containsKey(varName)) {
-                                    arrayStr = variableMethodCalls.get(varName);
-                                    variableMethodCalls.remove(varName);
+                                if (patternMatcher.variableMethodCalls.containsKey(varName)) {
+                                    arrayStr = patternMatcher.variableMethodCalls.get(varName);
+                                    patternMatcher.variableMethodCalls.remove(varName);
                                 }
                             }
 
@@ -789,9 +825,9 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
                             String arrayStr = null;
                             if (arrayExpr instanceof NameExpr) {
                                 String varName = ((NameExpr) arrayExpr).getNameAsString();
-                                if (variableMethodCalls.containsKey(varName)) {
-                                    arrayStr = variableMethodCalls.get(varName);
-                                    variableMethodCalls.remove(varName);
+                                if (patternMatcher.variableMethodCalls.containsKey(varName)) {
+                                    arrayStr = patternMatcher.variableMethodCalls.get(varName);
+                                    patternMatcher.variableMethodCalls.remove(varName);
                                 }
                             }
 
@@ -851,7 +887,7 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
                 }
 
                 // Standard multi-field or simple set() conversion
-                String assignment = patternMatcher.convertSetCall(methodCall, variableMethodCalls);
+                String assignment = patternMatcher.convertSetCall(methodCall);
                 if (assignment != null) {
                     appendIndented(assignment + "\n");
                     return;
@@ -1038,10 +1074,10 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
         // Check if this is a simple variable reference that's tracked
         if (expr instanceof NameExpr) {
             String varName = ((NameExpr) expr).getNameAsString();
-            if (variableMethodCalls.containsKey(varName)) {
+            if (patternMatcher.variableMethodCalls.containsKey(varName)) {
                 // Expand the tracked variable
-                String expanded = variableMethodCalls.get(varName);
-                variableMethodCalls.remove(varName);
+                String expanded = patternMatcher.variableMethodCalls.get(varName);
+                patternMatcher.variableMethodCalls.remove(varName);
                 return expanded;
             }
         }
@@ -1153,9 +1189,9 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
         // Check if this is a tracked variable
         if (arg instanceof NameExpr) {
             String varName = ((NameExpr) arg).getNameAsString();
-            if (variableMethodCalls.containsKey(varName)) {
-                String expanded = variableMethodCalls.get(varName);
-                variableMethodCalls.remove(varName);
+            if (patternMatcher.variableMethodCalls.containsKey(varName)) {
+                String expanded = patternMatcher.variableMethodCalls.get(varName);
+                patternMatcher.variableMethodCalls.remove(varName);
                 return expanded;
             }
         } else if (arg instanceof MethodCallExpr) {
