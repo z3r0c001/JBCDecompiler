@@ -608,8 +608,6 @@ public class PatternMatcher {
                 return args.substring(0, commaIdx).trim() + "[" + args.substring(commaIdx + 1).trim() + "]";
             }
             return args;
-        case "op_add":
-            return convertArguments(methodCall, "+");
         case "op_equal":
             return convertBinaryOp(methodCall, "EQ");
         case "boolVal":
@@ -618,8 +616,14 @@ public class PatternMatcher {
                 return convertExpression(methodCall.getArgument(0));
             }
             return "";
+        case "op_add":
+            return convertArguments(methodCall, "+");
         case "op_sub":
             return convertArguments(methodCall, "-");
+        case "op_mult":
+            return convertArguments(methodCall, "*");
+        case "op_div":
+            return convertArguments(methodCall, "/");
         case "op_ne":
             return convertBinaryOp(methodCall, "NE");
         case "op_gt":
