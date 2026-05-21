@@ -1,0 +1,46 @@
+.code-area {
+    -fx-font-family: "Consolas", "Monaco", "Courier New", monospace;
+    -fx-font-size: 13px;
+    -fx-background-color: #ffffff;
+    -fx-text-fill: #d4d4d4;
+}
+
+.keyword {
+    -fx-fill: #569cd6;
+    -fx-font-weight: bold;
+}
+
+.string {
+    -fx-fill: #ce9178;
+}
+
+.comment {
+    -fx-fill: #6a9955;
+    -fx-font-style: italic;
+}
+
+.number {
+    -fx-fill: #b5cea8;
+}
+
+.status-bar {
+    -fx-background-color: #007acc;
+    -fx-text-fill: white;
+    -fx-padding: 5px;
+}
+
+.menu-bar {
+    -fx-background-color: #ffffff;
+}
+
+.menu-bar .menu {
+    -fx-text-fill: white;
+}
+
+.menu-bar .menu-item {
+    -fx-text-fill: black;
+}
+
+.split-pane > .split-pane-divider {
+    -fx-background-color: #333333;
+}

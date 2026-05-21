@@ -16,7 +16,6 @@ public class PatternMatcher {
     // Track variable assignments from method calls for expansion
     Map<String, String> variableMethodCalls = new HashMap<>();
 
-
     /**
      * Set the array contents map for variable expansion
      */
@@ -96,8 +95,9 @@ public class PatternMatcher {
                     fieldStr = convertFieldExpression(fieldExpr);
                 }
 
-                if(!fieldStr.equals("0")){
-                    if (fields.length() > 0) fields.append(",");
+                if (!fieldStr.equals("0")) {
+                    if (fields.length() > 0)
+                        fields.append(",");
                     fields.append(fieldStr);
                 }
             }
@@ -117,7 +117,7 @@ public class PatternMatcher {
      * Handles two patterns:
      * - get(_VAR, getCOMPONENT()._FIELD, 0, 0) → VAR<COMPONENT.FIELD>
      * - get(_VAR, component_XX_cl._Field, 0, 0) → VAR<COMPONENT.Field>
-     * - get(_VAR, mv, sv, default) → VAR<mv,sv>  (multi-value array access)
+     * - get(_VAR, mv, sv, default) → VAR<mv,sv> (multi-value array access)
      * - get(_VAR, trackedArray) → VAR<field1,field2,...> (array expansion)
      */
     public String convertGetCall(MethodCallExpr getCall) {
@@ -139,7 +139,8 @@ public class PatternMatcher {
                 for (int i = 0; i < fields.size(); i++) {
                     String field = fields.get(i);
                     if (!field.equals("0") && !field.isEmpty()) {
-                        if (fieldList.length() > 0) fieldList.append(",");
+                        if (fieldList.length() > 0)
+                            fieldList.append(",");
                         fieldList.append(field);
                     }
                 }
@@ -151,21 +152,23 @@ public class PatternMatcher {
             }
         }
 
-        // Check if this is multi-value array access (4 arguments: array, mv, sv, default)
-        // But only if argument 2 is a simple literal/number (not a component field reference)
+        // Check if this is multi-value array access (4 arguments: array, mv, sv,
+        // default)
+        // But only if argument 2 is a simple literal/number (not a component field
+        // reference)
         if (argCount >= 3) {
             Expression arg1Expr = getCall.getArgument(1);
 
             // Check if arg1 is a simple literal or number (multi-value access)
             // Component field references should NOT be treated as multi-value indices
             boolean isComponentRef = arg1Expr.toString().startsWith("component_") ||
-                                     arg1Expr instanceof FieldAccessExpr ||
-                                     arg1Expr instanceof MethodCallExpr;
+                    arg1Expr instanceof FieldAccessExpr ||
+                    arg1Expr instanceof MethodCallExpr;
 
             if (!isComponentRef &&
-                (arg1Expr instanceof IntegerLiteralExpr ||
-                 arg1Expr instanceof LongLiteralExpr ||
-                 arg1Expr instanceof NameExpr)) {
+                    (arg1Expr instanceof IntegerLiteralExpr ||
+                            arg1Expr instanceof LongLiteralExpr ||
+                            arg1Expr instanceof NameExpr)) {
                 // This is multi-value access: get(array, mv, sv, default)
                 // Convert to: array<mv,sv> (skip 0 values)
                 Expression mvExpr = arg1Expr;
@@ -180,7 +183,8 @@ public class PatternMatcher {
                     fields.append(mv);
                 }
                 if (!sv.equals("0")) {
-                    if (fields.length() > 0) fields.append(",");
+                    if (fields.length() > 0)
+                        fields.append(",");
                     fields.append(sv);
                 }
 
@@ -190,7 +194,8 @@ public class PatternMatcher {
                     return varName;
                 }
             } else if (isComponentRef && argCount >= 4) {
-                // Field reference with multi-value index: get(array, field, mv, default) → array<field,mv>
+                // Field reference with multi-value index: get(array, field, mv, default) →
+                // array<field,mv>
                 Expression fieldExpr = getCall.getArgument(1);
                 Expression mvExpr = getCall.getArgument(2);
 
@@ -202,7 +207,8 @@ public class PatternMatcher {
                     fields.append(field);
                 }
                 if (!mv.equals("0")) {
-                    if (fields.length() > 0) fields.append(",");
+                    if (fields.length() > 0)
+                        fields.append(",");
                     fields.append(mv);
                 }
 
@@ -238,8 +244,10 @@ public class PatternMatcher {
     /**
      * Convert field expression to JBC field name
      * Handles patterns like:
-     * - getATMFRM_Foundation()._AtmParameter_AtmParaAmtFmt → ATMFRM.Foundation.AtmParameter.AtmParaAmtFmt
-     * - component_ATMFRM_Foundation_18_cl._AtmParameter_AtmParaAmtFmt → ATMFRM.Foundation.AtmParameter.AtmParaAmtFmt
+     * - getATMFRM_Foundation()._AtmParameter_AtmParaAmtFmt →
+     * ATMFRM.Foundation.AtmParameter.AtmParaAmtFmt
+     * - component_ATMFRM_Foundation_18_cl._AtmParameter_AtmParaAmtFmt →
+     * ATMFRM.Foundation.AtmParameter.AtmParaAmtFmt
      */
     public String convertFieldExpression(Expression fieldExpr) {
         if (fieldExpr == null)
@@ -317,7 +325,8 @@ public class PatternMatcher {
 
     /**
      * Convert variable or method call expression to JBC format
-     * Handles chained method calls like: this.getEB_SystemTables().getRIntercoParameter()
+     * Handles chained method calls like:
+     * this.getEB_SystemTables().getRIntercoParameter()
      */
     public String convertVariableOrMethodCall(Expression expr) {
         if (expr == null)
@@ -334,23 +343,24 @@ public class PatternMatcher {
 
     /**
      * Convert a method call chain to JBC format
-     * Handles: this.getEB_SystemTables().getRIntercoParameter() → EB.SystemTables.getRIntercoParameter()
+     * Handles: this.getEB_SystemTables().getRIntercoParameter() →
+     * EB.SystemTables.getRIntercoParameter()
      */
     private String convertMethodCallChain(MethodCallExpr methodCall) {
         StringBuilder result = new StringBuilder();
-        
+
         // Build the scope chain
         if (methodCall.hasScope()) {
             Expression scope = methodCall.getScope().get();
             String scopeStr = scope.toString();
-            
+
             // Handle "this." prefix - remove it
             if (scopeStr.startsWith("this.")) {
                 scopeStr = scopeStr.substring(5);
             } else if (scopeStr.equals("this")) {
                 scopeStr = "";
             }
-            
+
             // If scope is also a method call, recursively convert it
             if (scope instanceof MethodCallExpr) {
                 result.append(convertMethodCallChain((MethodCallExpr) scope));
@@ -358,13 +368,13 @@ public class PatternMatcher {
                 // Convert variable name
                 result.append(convertVariableName(scopeStr));
             }
-            
+
             // Add dot separator if we have a scope
             if (result.length() > 0) {
                 result.append(".");
             }
         }
-        
+
         // Add the method name (without "get" prefix if present)
         String methodName = methodCall.getNameAsString();
         if (methodName.startsWith("get") && methodName.length() > 3) {
@@ -373,7 +383,7 @@ public class PatternMatcher {
         } else {
             result.append(methodName);
         }
-        
+
         // Convert underscores to dots
         return result.toString().replace("_", ".");
     }
@@ -454,272 +464,292 @@ public class PatternMatcher {
         // The scope "this" doesn't affect the translation
 
         switch (methodName) {
-        case "ABS":
-            return "ABS(" + convertArguments(methodCall) + ")";
-        case "FMT":
-            return "FMT(" + convertArguments(methodCall) + ")";
-        case "FIELD":
-            return "FIELD(" + convertArguments(methodCall) + ")";
-        case "INDEX":
-            return "INDEX(" + convertArguments(methodCall) + ")";
-        case "LEN":
-            return "LEN(" + convertArguments(methodCall) + ")";
-        case "LOCATE":
-            // LOCATE(value, array, start, increment, decrement, padChar, padDir, variable, mode)
-            // JBC syntax: LOCATE value IN array<start,increment> SETTING variable THEN
-            if (methodCall.getArguments().size() >= 8) {
-                Expression valueExpr = methodCall.getArgument(0);
-                Expression arrayExpr = methodCall.getArgument(1);
-                Expression startExpr = methodCall.getArgument(2);
-                Expression incExpr = methodCall.getArgument(3);
-                Expression varExpr = methodCall.getArgument(7);
+            case "ABS":
+                return "ABS(" + convertArguments(methodCall) + ")";
+            case "FMT":
+                return "FMT(" + convertArguments(methodCall) + ")";
+            case "FIELD":
+                return "FIELD(" + convertArguments(methodCall) + ")";
+            case "INDEX":
+                return "INDEX(" + convertArguments(methodCall) + ")";
+            case "LEN":
+                return "LEN(" + convertArguments(methodCall) + ")";
+            case "LOCATE":
+                // LOCATE(value, array, start, increment, decrement, padChar, padDir, variable,
+                // mode)
+                // JBC syntax: LOCATE value IN array<start,increment> SETTING variable THEN
+                if (methodCall.getArguments().size() >= 8) {
+                    Expression valueExpr = methodCall.getArgument(0);
+                    Expression arrayExpr = methodCall.getArgument(1);
+                    Expression startExpr = methodCall.getArgument(2);
+                    Expression incExpr = methodCall.getArgument(3);
+                    Expression varExpr = methodCall.getArgument(7);
 
-                String value = convertExpression(valueExpr);
-                String array = convertExpression(arrayExpr);
-                String start = convertExpression(startExpr);
-                String inc = convertExpression(incExpr);
-                String variable = convertExpression(varExpr);
+                    String value = convertExpression(valueExpr);
+                    String array = convertExpression(arrayExpr);
+                    String start = convertExpression(startExpr);
+                    String inc = convertExpression(incExpr);
+                    String variable = convertExpression(varExpr);
 
-                return "LOCATE " + value + " IN " + array + "<" + start + "," + inc + "> SETTING " + variable + " THEN\n";
-            }
-            return "LOCATE(" + convertArguments(methodCall) + ")";
-        case "_TestFor_":
-            // TAFJ FOR loop condition - return null so WhileStmt visitor can handle it
-            return null;
-        case "MINIMUM":
-            return "MINIMUM(" + convertArguments(methodCall) + ")";
-        case "MAXIMUM":
-            return "MAXIMUM(" + convertArguments(methodCall) + ")";
-        case "CONVERT_STMT":
-            if (methodCall.getArguments().size() >= 6) {
-            Expression fromValueExpr = methodCall.getArgument(0);
-            Expression toValueExpr = methodCall.getArgument(1);
-            Expression arrayExpr = methodCall.getArgument(2);
-            Expression fmExpr = methodCall.getArgument(3);
-            Expression vmExpr = methodCall.getArgument(4);
-            Expression smExpr = methodCall.getArgument(5);
-
-            String fromValue = convertExpression(fromValueExpr);
-            String toValue = convertExpression(toValueExpr);
-            String array = convertExpression(arrayExpr);
-
-            String sm = smExpr.isNullLiteralExpr()?"":convertExpression(smExpr);
-            String vm = vmExpr.isNullLiteralExpr()?"":convertExpression(vmExpr);
-            String fm = fmExpr.isNullLiteralExpr()?"":convertExpression(fmExpr);
-            
-            if(!fm.isEmpty())
-            {
-                array = array + "<" + fm;
-                if(!vm.isEmpty())
-                {
-                    array = array + "," + vm;
-                    if(!sm.isEmpty())
-                        array = array + "," + sm;
+                    return "LOCATE " + value + " IN " + array + "<" + start + "," + inc + "> SETTING " + variable
+                            + " THEN\n";
                 }
-                array += ">";
-            }
-            return "CONVERT "+fromValue+" TO "+toValue+ " IN "+array;
-            }
-
-            return "CONVERT(" + convertArguments(methodCall) + ")";
-        case "DCOUNT":
-            // DCOUNT has 2 arguments: string and delimiter
-            // Just convert arguments normally, jAtVariable.VM will be converted to @VM
-            return "DCOUNT(" + convertArguments(methodCall) + ")";
-        case "DEL":
-            // DEL(array, mv, sv, pad) → DEL array<mv,sv>
-            // TAFJ call: this.DEL(this._CompanyList, 1, this._CurCompPos, 0)
-            if (methodCall.getArguments().size() >= 3) {
-                Expression arrayExpr = methodCall.getArgument(0);
-                Expression mvExpr = methodCall.getArgument(1);
-                Expression svExpr = methodCall.getArgument(2);
-
-                String array = convertExpression(arrayExpr);
-                String mv = convertExpression(mvExpr);
-                String sv = convertExpression(svExpr);
-
-                StringBuilder fields = new StringBuilder();
-                if (!mv.equals("0")) fields.append(mv);
-                if (!sv.equals("0")) {
-                    if (fields.length() > 0) fields.append(",");
-                    fields.append(sv);
+                return "LOCATE(" + convertArguments(methodCall) + ")";
+            case "_TestFor_":
+                // TAFJ FOR loop condition - return null so WhileStmt visitor can handle it
+                return null;
+            case "PRINT":
+                if (methodCall.getArguments().size() >= 1) {
+                    return "PRINT " + convertExpression(methodCall.getArgument(1));
                 }
-
-                if (fields.length() > 0) {
-                    return "DEL " + array + "<" + fields.toString() + ">";
-                } else {
-                    return "DEL " + array;
+            case "INPUT":
+                if (methodCall.getArguments().size() >= 1) {
+                    return "INPUT " + convertExpression(methodCall.getArgument(0));
                 }
-            }
-            // Fallback: just convert arguments
-            return "DEL(" + convertArguments(methodCall) + ")";
-        case "NOT":
-            // NOT(expr) → NOT(expr)
-            if (methodCall.getArguments().size() >= 1) {
-                return "NOT(" + convertExpression(methodCall.getArgument(0)) + ")";
-            }
-            return "NOT";
-        case "concat":
-            // For .concat() method - All segments (scope + arguments) should be joined by ':'
-            StringBuilder concatResult = new StringBuilder();
-
-            
-            // 1. Handle the scope (the object being concatenated to). Convert this first.
-            if (methodCall.hasScope()) {
-                Expression scope = methodCall.getScope().get();
-                String scopeStr = convertExpression(scope);
-                concatResult.append(scopeStr);
-            }
-
-            // 2. Append arguments, separated by ':', ensuring proper sequence continuation.
-            StringBuilder argsBuilder = new StringBuilder();
-            int argIndex = 0;
-            for (Expression arg : methodCall.getArguments()) {
-                String convertedArg = convertExpression(arg);
-                if (argIndex > 0) {
-                    argsBuilder.append(":");
+            case "REMOVE":
+                if (methodCall.getArguments().size() >= 1) {
+                    return "REMOVE " + convertExpression(methodCall.getArgument(0)) + " FROM "
+                            + convertExpression(methodCall.getArgument(1)) + " SETTING "
+                            + convertExpression(methodCall.getArgument(2));
                 }
-                argsBuilder.append(convertedArg);
-                argIndex++;
-            }
+            case "MINIMUM":
+                return "MINIMUM(" + convertArguments(methodCall) + ")";
+            case "MAXIMUM":
+                return "MAXIMUM(" + convertArguments(methodCall) + ")";
+            case "CHANGE_STMT":
+            case "CONVERT_STMT":
+                String out_methodName = methodName.substring(0, methodName.indexOf('_'));
+                if (methodCall.getArguments().size() >= 6) {
+                    Expression fromValueExpr = methodCall.getArgument(0);
+                    Expression toValueExpr = methodCall.getArgument(1);
+                    Expression arrayExpr = methodCall.getArgument(2);
+                    Expression fmExpr = methodCall.getArgument(3);
+                    Expression vmExpr = methodCall.getArgument(4);
+                    Expression smExpr = methodCall.getArgument(5);
 
-            // If we have both a scope and arguments, combine them with an initial ':' separator.
-            if (concatResult.length() > 0 && argsBuilder.length() > 0) {
-                 return concatResult.toString() + ":" + argsBuilder.toString();
-            } else if (argsBuilder.length() > 0) {
-                // If no scope, just return the concatenated arguments string.
-                return argsBuilder.toString();
-            }
-            return "";
-        case "get":
-            return convertGetCall(methodCall);
-        case "set":
-            return convertSetCall(methodCall);
-        case "op_cat":
-            // Concatenate arguments with colon (JBC concatenation) - no spaces
-            return convertArguments(methodCall, ":");
-        case "valueOf":
-            // Character.valueOf(...) or Double.valueOf(...) - just return the argument
-            return convertArguments(methodCall);
-        case "fGet":
-            String args = convertArguments(methodCall);
-            int commaIdx = args.indexOf(",");
-            if (commaIdx > 0) {
-                return args.substring(0, commaIdx).trim() + "[" + args.substring(commaIdx + 1).trim() + "]";
-            }
-            return args;
-        case "op_equal":
-            return convertBinaryOp(methodCall, "EQ");
-        case "boolVal":
-            // boolVal wraps conditions - just return the inner expression
-            if (methodCall.getArguments().size() > 0) {
-                return convertExpression(methodCall.getArgument(0));
-            }
-            return "";
-        case "op_add":
-            return convertArguments(methodCall, "+");
-        case "op_sub":
-            return convertArguments(methodCall, "-");
-        case "op_mult":
-            return convertArguments(methodCall, "*");
-        case "op_div":
-            return convertArguments(methodCall, "/");
-        case "op_ne":
-            return convertBinaryOp(methodCall, "NE");
-        case "op_gt":
-            return convertBinaryOp(methodCall, "GT");
-        case "op_lt":
-            return convertBinaryOp(methodCall, "LT");
-        case "op_ge":
-            return convertBinaryOp(methodCall, "GE");
-        case "op_le":
-            return convertBinaryOp(methodCall, "LE");
-        case "op_match":
-            return convertBinaryOp(methodCall, "MATCHES");
-        default:
-            // Check for component method calls (e.g., component.getSomething())
-            if (methodCall.hasScope() && !methodName.equals("_l") && !methodName.startsWith("lbl_")) {
-                Expression scopeExpr = methodCall.getScope().get();
-                String scope = scopeExpr.toString();
-                // Handle Optional[...] wrapper from JavaParser
-                if (scope.startsWith("Optional[")) {
-                    scope = scope.substring(9, scope.length() - 1);
-                }
+                    String fromValue = convertExpression(fromValueExpr);
+                    String toValue = convertExpression(toValueExpr);
+                    String array = convertExpression(arrayExpr);
 
-                // Skip "this." scope for TAFJ runtime methods - convert arguments only
-                if (scope.equals("this")) {
-                    // This is a TAFJ runtime method like this.INDEX(), this.ABS(), etc.
-                    // Just output the method name with converted arguments
-                    
-                    // Handle op_ methods with this. prefix
-                    if (methodName.equals("op_and")) {
-                        String arg0 = convertExpression(methodCall.getArgument(0));
-                        String arg1 = convertExpression(methodCall.getArgument(1));
-                        return arg0 + " AND " + arg1;
-                    }
-                    if (methodName.equals("op_or")) {
-                        String arg0 = convertExpression(methodCall.getArgument(0));
-                        String arg1 = convertExpression(methodCall.getArgument(1));
-                        return arg0 + " OR " + arg1;
-                    }
-                    if (methodName.equals("boolVal")) {
-                        return convertExpression(methodCall.getArgument(0));
-                    }
-                    if (methodName.equals("NOT")) {
-                        return "NOT(" + convertExpression(methodCall.getArgument(0)) + ")";
-                    }
-                    
-                    if (methodCall.getArguments().isEmpty() && methodName.startsWith("get")) {
-                        // Getter method with no arguments - remove "get" prefix, convert underscores, and add ()
-                        return methodName.substring(3).replace("_", ".") + "()";
-                    }
-                    return methodName + "(" + convertArguments(methodCall) + ")";
-                }
+                    String sm = smExpr.isNullLiteralExpr() ? "" : convertExpression(smExpr);
+                    String vm = vmExpr.isNullLiteralExpr() ? "" : convertExpression(vmExpr);
+                    String fm = fmExpr.isNullLiteralExpr() ? "" : convertExpression(fmExpr);
 
-                // Convert the scope expression properly (handles chained method calls)
-                String convertedScope = convertExpression(scopeExpr);
-                
-                // Remove trailing () from scope if present (component getter methods)
-                String scopeStr = convertedScope;
-                if (scopeStr.endsWith("()")) {
-                    scopeStr = scopeStr.substring(0, scopeStr.length() - 2);
-                }
-                
-                String finalStr = scopeStr;
-
-                // Add the current method name with parentheses (keep it as a method call)
-                String convertedMethodName = methodName.replace("_", ".");
-                
-                if (methodCall.getArguments().isNonEmpty()) {
-                    ArrayList<String> argsList = new ArrayList<>();
-                    for (Expression arg : methodCall.getArguments()) {
-                        if (arg instanceof CastExpr) {
-                            CastExpr castexpr = (CastExpr) arg;
-                            argsList.add(convertExpression(castexpr.getExpression()));
+                    if (!fm.isEmpty()) {
+                        array = array + "<" + fm;
+                        if (!vm.isEmpty()) {
+                            array = array + "," + vm;
+                            if (!sm.isEmpty())
+                                array = array + "," + sm;
                         }
+                        array += ">";
                     }
-                    if (!argsList.isEmpty()) {
-                        finalStr += "." + convertedMethodName + "(" + String.join(", ", argsList) + ")";
+                    return out_methodName + " " + fromValue + " TO " + toValue + " IN " + array;
+                }
+
+                return out_methodName + "(" + convertArguments(methodCall) + ")";
+            case "DCOUNT":
+                // DCOUNT has 2 arguments: string and delimiter
+                // Just convert arguments normally, jAtVariable.VM will be converted to @VM
+                return "DCOUNT(" + convertArguments(methodCall) + ")";
+            case "DEL":
+                // DEL(array, mv, sv, pad) → DEL array<mv,sv>
+                // TAFJ call: this.DEL(this._CompanyList, 1, this._CurCompPos, 0)
+                if (methodCall.getArguments().size() >= 3) {
+                    Expression arrayExpr = methodCall.getArgument(0);
+                    Expression mvExpr = methodCall.getArgument(1);
+                    Expression svExpr = methodCall.getArgument(2);
+
+                    String array = convertExpression(arrayExpr);
+                    String mv = convertExpression(mvExpr);
+                    String sv = convertExpression(svExpr);
+
+                    StringBuilder fields = new StringBuilder();
+                    if (!mv.equals("0"))
+                        fields.append(mv);
+                    if (!sv.equals("0")) {
+                        if (fields.length() > 0)
+                            fields.append(",");
+                        fields.append(sv);
+                    }
+
+                    if (fields.length() > 0) {
+                        return "DEL " + array + "<" + fields.toString() + ">";
                     } else {
-                        // For non-CastExpr arguments, use convertArguments
-                        finalStr += "." + convertedMethodName + "(" + convertArguments(methodCall) + ")";
+                        return "DEL " + array;
                     }
-                } else {
-                    // No arguments - add empty parentheses
-                    finalStr += "." + convertedMethodName + "()";
+                }
+                // Fallback: just convert arguments
+                return "DEL(" + convertArguments(methodCall) + ")";
+            case "NOT":
+                // NOT(expr) → NOT(expr)
+                if (methodCall.getArguments().size() >= 1) {
+                    return "NOT(" + convertExpression(methodCall.getArgument(0)) + ")";
+                }
+                return "NOT";
+            case "concat":
+                // For .concat() method - All segments (scope + arguments) should be joined by
+                // ':'
+                StringBuilder concatResult = new StringBuilder();
+
+                // 1. Handle the scope (the object being concatenated to). Convert this first.
+                if (methodCall.hasScope()) {
+                    Expression scope = methodCall.getScope().get();
+                    String scopeStr = convertExpression(scope);
+                    concatResult.append(scopeStr);
                 }
 
-                return finalStr;
-            } else if (methodName.startsWith("lbl_")) {
-                return "GOSUB " + methodName.substring(4).replace("_", ".") + "\n";
-            } else if (methodName.startsWith("get")) {
-                String componentName = extractComponentName(methodName);
-                if (componentName != null) {
-                    return componentName + "." + methodCall.getArguments().get(0).toString();
+                // 2. Append arguments, separated by ':', ensuring proper sequence continuation.
+                StringBuilder argsBuilder = new StringBuilder();
+                int argIndex = 0;
+                for (Expression arg : methodCall.getArguments()) {
+                    String convertedArg = convertExpression(arg);
+                    if (argIndex > 0) {
+                        argsBuilder.append(":");
+                    }
+                    argsBuilder.append(convertedArg);
+                    argIndex++;
                 }
-            }
 
-            return null;
+                // If we have both a scope and arguments, combine them with an initial ':'
+                // separator.
+                if (concatResult.length() > 0 && argsBuilder.length() > 0) {
+                    return concatResult.toString() + ":" + argsBuilder.toString();
+                } else if (argsBuilder.length() > 0) {
+                    // If no scope, just return the concatenated arguments string.
+                    return argsBuilder.toString();
+                }
+                return "";
+            case "get":
+                return convertGetCall(methodCall);
+            case "set":
+                return convertSetCall(methodCall);
+            case "op_cat":
+                // Concatenate arguments with colon (JBC concatenation) - no spaces
+                return convertArguments(methodCall, ":");
+            case "valueOf":
+                // Character.valueOf(...) or Double.valueOf(...) - just return the argument
+                return convertArguments(methodCall);
+            case "fGet":
+                String args = convertArguments(methodCall);
+                int commaIdx = args.indexOf(",");
+                if (commaIdx > 0) {
+                    return args.substring(0, commaIdx).trim() + "[" + args.substring(commaIdx + 1).trim() + "]";
+                }
+                return args;
+            case "op_equal":
+                return convertBinaryOp(methodCall, "EQ");
+            case "boolVal":
+                // boolVal wraps conditions - just return the inner expression
+                if (methodCall.getArguments().size() > 0) {
+                    return convertExpression(methodCall.getArgument(0));
+                }
+                return "";
+            case "op_add":
+                return convertArguments(methodCall, "+");
+            case "op_sub":
+                return convertArguments(methodCall, "-");
+            case "op_mult":
+                return convertArguments(methodCall, "*");
+            case "op_div":
+                return convertArguments(methodCall, "/");
+            case "op_ne":
+                return convertBinaryOp(methodCall, "NE");
+            case "op_gt":
+                return convertBinaryOp(methodCall, "GT");
+            case "op_lt":
+                return convertBinaryOp(methodCall, "LT");
+            case "op_ge":
+                return convertBinaryOp(methodCall, "GE");
+            case "op_le":
+                return convertBinaryOp(methodCall, "LE");
+            case "op_match":
+                return convertBinaryOp(methodCall, "MATCHES");
+            default:
+                // Check for component method calls (e.g., component.getSomething())
+                if (methodCall.hasScope() && !methodName.equals("_l") && !methodName.startsWith("lbl_")) {
+                    Expression scopeExpr = methodCall.getScope().get();
+                    String scope = scopeExpr.toString();
+                    // Handle Optional[...] wrapper from JavaParser
+                    if (scope.startsWith("Optional[")) {
+                        scope = scope.substring(9, scope.length() - 1);
+                    }
+
+                    // Skip "this." scope for TAFJ runtime methods - convert arguments only
+                    if (scope.equals("this")) {
+                        // This is a TAFJ runtime method like this.INDEX(), this.ABS(), etc.
+                        // Just output the method name with converted arguments
+
+                        // Handle op_ methods with this. prefix
+                        if (methodName.equals("op_and")) {
+                            String arg0 = convertExpression(methodCall.getArgument(0));
+                            String arg1 = convertExpression(methodCall.getArgument(1));
+                            return arg0 + " AND " + arg1;
+                        }
+                        if (methodName.equals("op_or")) {
+                            String arg0 = convertExpression(methodCall.getArgument(0));
+                            String arg1 = convertExpression(methodCall.getArgument(1));
+                            return arg0 + " OR " + arg1;
+                        }
+                        if (methodName.equals("boolVal")) {
+                            return convertExpression(methodCall.getArgument(0));
+                        }
+                        if (methodName.equals("NOT")) {
+                            return "NOT(" + convertExpression(methodCall.getArgument(0)) + ")";
+                        }
+
+                        if (methodCall.getArguments().isEmpty() && methodName.startsWith("get")) {
+                            // Getter method with no arguments - remove "get" prefix, convert underscores,
+                            // and add ()
+                            return methodName.substring(3).replace("_", ".") + "()";
+                        }
+                        return methodName + "(" + convertArguments(methodCall) + ")";
+                    }
+
+                    // Convert the scope expression properly (handles chained method calls)
+                    String convertedScope = convertExpression(scopeExpr);
+
+                    // Remove trailing () from scope if present (component getter methods)
+                    String scopeStr = convertedScope;
+                    if (scopeStr.endsWith("()")) {
+                        scopeStr = scopeStr.substring(0, scopeStr.length() - 2);
+                    }
+
+                    String finalStr = scopeStr;
+
+                    // Add the current method name with parentheses (keep it as a method call)
+                    String convertedMethodName = methodName.replace("_", ".");
+
+                    if (methodCall.getArguments().isNonEmpty()) {
+                        ArrayList<String> argsList = new ArrayList<>();
+                        for (Expression arg : methodCall.getArguments()) {
+                            if (arg instanceof CastExpr) {
+                                CastExpr castexpr = (CastExpr) arg;
+                                argsList.add(convertExpression(castexpr.getExpression()));
+                            }
+                        }
+                        if (!argsList.isEmpty()) {
+                            finalStr += "." + convertedMethodName + "(" + String.join(", ", argsList) + ")";
+                        } else {
+                            // For non-CastExpr arguments, use convertArguments
+                            finalStr += "." + convertedMethodName + "(" + convertArguments(methodCall) + ")";
+                        }
+                    } else {
+                        // No arguments - add empty parentheses
+                        finalStr += "." + convertedMethodName + "()";
+                    }
+
+                    return finalStr;
+                } else if (methodName.startsWith("lbl_")) {
+                    return "GOSUB " + methodName.substring(4).replace("_", ".") + "\n";
+                } else if (methodName.startsWith("get")) {
+                    String componentName = extractComponentName(methodName);
+                    if (componentName != null) {
+                        return componentName + "." + methodCall.getArguments().get(0).toString();
+                    }
+                }
+
+                return null;
         }
 
     }
@@ -785,14 +815,11 @@ public class PatternMatcher {
 
             if (scope.equals("jAtVariable") && field.equals("VM")) {
                 return "@VM";
-            }
-            else if (scope.equals("jAtVariable") && field.equals("FM")) {
+            } else if (scope.equals("jAtVariable") && field.equals("FM")) {
                 return "@FM";
-            }
-            else if (scope.equals("jAtVariable") && field.equals("SM")) {
+            } else if (scope.equals("jAtVariable") && field.equals("SM")) {
                 return "@SM";
-            }
-            else if (scope.equals("jAtVariable") && field.equals("IM")) {
+            } else if (scope.equals("jAtVariable") && field.equals("IM")) {
                 return "@IM";
             }
             // Handle this._VAR pattern -> VAR

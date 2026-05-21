@@ -66,10 +66,10 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
             String valueStr = convertExpression(value);
 
             // Skip TAFJ infrastructure assignments
-            if (targetStr.contains("Sys.PostGlobus") || 
-                targetStr.equals("this._Sys_PostGlobus") ||
-                targetStr.contains("Sys.ReturnTo") || 
-                targetStr.equals("this._Sys_ReturnTo")) {
+            if (targetStr.contains("Sys.PostGlobus") ||
+                    targetStr.equals("this._Sys_PostGlobus") ||
+                    targetStr.contains("Sys.ReturnTo") ||
+                    targetStr.equals("this._Sys_ReturnTo")) {
                 super.visit(n, arg);
                 return;
             }
@@ -82,8 +82,9 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
                     patternMatcher.variableMethodCalls.put(varName, valueStr);
                 }
             }
-            
-            // For the purpose of the final output, we might also want to emit the assignment if it's a field/setter
+
+            // For the purpose of the final output, we might also want to emit the
+            // assignment if it's a field/setter
             // But the bug report focuses on the final assignment to _SEL_CMD
             super.visit(n, arg);
         } else {
@@ -96,7 +97,7 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
         // Capture class name as subroutine name (convert underscores to dots)
         String className = n.getNameAsString();
         this.subroutineName = className.replaceAll("_\\d+_cl", "").replaceAll("_cl", "").replace("_", ".");
-        
+
         // Only visit methods
         for (var method : n.getMethods()) {
             method.accept(this, arg);
@@ -110,8 +111,9 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
             String labelName = methodName.substring(4).replace("_", ".");
             appendIndented(labelName + ":\n");
             indentLevel++;
-        } else if (methodName.equals("main")) {
+        } else if (methodName.equals("main") && n.getParameters().isEmpty()) {
             String subName = (subroutineName != null && !subroutineName.isEmpty()) ? subroutineName : "TEST.RTN";
+            System.out.println("subName :" + subName);
             appendIndented("SUBROUTINE " + subName + "(...)\n");
             indentLevel++;
         } else {
@@ -125,9 +127,9 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
                 if (stmt instanceof ExpressionStmt) {
                     stmt.accept(this, arg);
                 } else if (stmt instanceof IfStmt || stmt instanceof ForStmt ||
-                           stmt instanceof DoStmt || stmt instanceof WhileStmt ||
-                           stmt instanceof ReturnStmt || stmt instanceof BlockStmt ||
-                           stmt instanceof SwitchStmt) {
+                        stmt instanceof DoStmt || stmt instanceof WhileStmt ||
+                        stmt instanceof ReturnStmt || stmt instanceof BlockStmt ||
+                        stmt instanceof SwitchStmt) {
                     stmt.accept(this, arg);
                 }
                 // Skip comments
@@ -141,12 +143,12 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
 
     @Override
     public void visit(IfStmt n, StringBuilder arg) {
-//        System.out.println("IfStmt :" + n.toString());
+        // System.out.println("IfStmt :" + n.toString());
 
         // Skip TAFJ infrastructure code: _Sys_PostGlobus checks
         String conditionStr = n.getCondition().toString();
         if (conditionStr.contains("_Sys_PostGlobus") ||
-            conditionStr.contains("Sys.PostGlobus")) {
+                conditionStr.contains("Sys.PostGlobus")) {
             // Skip this TAFJ boilerplate code
             return;
         }
@@ -155,24 +157,31 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
         patternMatcher.setArrayContents(arrayContents);
         String condition = convertCondition(n.getCondition());
         patternMatcher.setArrayContents(null);
-        
+
         if (!condition.isEmpty()) {
-            appendIndented("\nIF ");
-            jbcCode.append(condition);
-            jbcCode.append(" THEN\n");
+            if (condition.contains("session.isUnitTest()")) {
+                if (n.getElseStmt().isPresent()) {
+                    n.getElseStmt().get().accept(this, arg);
+                }
+            } else if (condition.contains("session.getStateSubroutineAfterCall()")) {
+            } else {
+                appendIndented("\nIF ");
+                jbcCode.append(condition);
+                jbcCode.append(" THEN\n");
 
-            indentLevel++;
-            n.getThenStmt().accept(this, arg);
-            indentLevel--;
-
-            if (n.getElseStmt().isPresent()) {
-                appendIndented("END ELSE\n");
                 indentLevel++;
-                n.getElseStmt().get().accept(this, arg);
+                n.getThenStmt().accept(this, arg);
                 indentLevel--;
-            }
 
-            appendIndented("END\n");
+                if (n.getElseStmt().isPresent()) {
+                    appendIndented("END ELSE\n");
+                    indentLevel++;
+                    n.getElseStmt().get().accept(this, arg);
+                    indentLevel--;
+                }
+
+                appendIndented("END\n");
+            }
         }
         // super.visit(n, arg);
     }
@@ -185,19 +194,19 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
             // Convert LOCATE switch to IF/THEN/END structure
             // The selector already contains "LOCATE ... THEN" from PatternMatcher
             String locateStmt = patternMatcher.convertMethodCall(
-                (MethodCallExpr)((SwitchStmt)n).getSelector());
+                    (MethodCallExpr) ((SwitchStmt) n).getSelector());
 
             if (locateStmt != null && locateStmt.startsWith("LOCATE ")) {
                 appendIndented(locateStmt + "\n");
                 indentLevel++;
-                
+
                 // Process each case
                 for (SwitchEntry entry : n.getEntries()) {
                     if (entry.getLabels().isEmpty()) {
                         // default case (NOT FOUND) - skip for now
                         continue;
                     }
-                    
+
                     // For LOCATE, case 0 means found, other cases mean not found
                     // We only process case 0 (found case)
                     boolean isFoundCase = false;
@@ -207,7 +216,7 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
                             break;
                         }
                     }
-                    
+
                     if (isFoundCase) {
                         // Process statements in this case
                         for (Statement stmt : entry.getStatements()) {
@@ -215,7 +224,7 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
                         }
                     }
                 }
-                
+
                 indentLevel--;
                 appendIndented("END\n");
                 return;
@@ -231,7 +240,7 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
 
     @Override
     public void visit(ForStmt n, StringBuilder arg) {
-//        System.out.println("ForStmt :" + n.toString());
+        // System.out.println("ForStmt :" + n.toString());
         // Detect TAFJ FOR loops
         Expression init = n.getInitialization().isEmpty() ? null : n.getInitialization().get(0);
         Expression compare = n.getCompare().orElse(null);
@@ -260,7 +269,7 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
 
     @Override
     public void visit(DoStmt n, StringBuilder arg) {
-//        System.out.println("DoStmt :" + n.toString());
+        // System.out.println("DoStmt :" + n.toString());
         // Detect TAFJ BEGIN CASE pattern (do-while-false with breaks)
         String body = n.getBody().toString();
         String conditionStr = n.getCondition().toString();
@@ -273,16 +282,17 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
             indentLevel--;
             appendIndented("END CASE\n");
         } else if (body.contains("break") && (conditionStr.contains("_isBreak_") || conditionStr.contains("_loop_"))) {
-            // TAFJ WHILE loop pattern: do { if (breakCondition) break; ... } while (!_isBreak_ && _loop_)
+            // TAFJ WHILE loop pattern: do { if (breakCondition) break; ... } while
+            // (!_isBreak_ && _loop_)
             // Find the break IF statement and extract the WHILE condition
             String whileCondition = extractWhileCondition(n);
-            
+
             if (whileCondition != null && !whileCondition.isEmpty()) {
                 appendIndented("LOOP\n");
                 indentLevel++;
                 appendIndented("WHILE " + whileCondition + "\n");
                 indentLevel++;
-                
+
                 // Process body statements, skipping break IF and TAFJ boilerplate
                 if (n.getBody() instanceof BlockStmt) {
                     BlockStmt block = (BlockStmt) n.getBody();
@@ -300,7 +310,7 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
                 } else {
                     n.getBody().accept(this, arg);
                 }
-                
+
                 indentLevel--;
                 indentLevel--;
                 appendIndented("REPEAT\n");
@@ -373,15 +383,19 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
                     if (n.getBody() instanceof BlockStmt) {
                         BlockStmt body = (BlockStmt) n.getBody();
                         for (Statement stmt : body.getStatements()) {
-                            if (isTafjLoopBoilerplate(stmt)) continue;
-                            if (isForLoopIncrement(stmt, counterName)) continue;
-                            if (isForLoopEndBoilerplate(stmt)) continue;
+                            if (isTafjLoopBoilerplate(stmt))
+                                continue;
+                            if (isForLoopIncrement(stmt, counterName))
+                                continue;
+                            if (isForLoopEndBoilerplate(stmt))
+                                continue;
                             // Skip the assignment: loopVar = counter
                             if (stmt instanceof ExpressionStmt) {
                                 ExpressionStmt exprStmt = (ExpressionStmt) stmt;
                                 if (exprStmt.getExpression() instanceof AssignExpr) {
                                     AssignExpr assign = (AssignExpr) exprStmt.getExpression();
-                                    if (assign.getValue().toString().trim().equals(counterName)) continue;
+                                    if (assign.getValue().toString().trim().equals(counterName))
+                                        continue;
                                 }
                             }
                             stmt.accept(this, arg);
@@ -412,7 +426,8 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
     }
 
     /**
-     * Check if statement is the TAFJ for-loop increment (counter = _inc2(var, step))
+     * Check if statement is the TAFJ for-loop increment (counter = _inc2(var,
+     * step))
      */
     private boolean isForLoopIncrement(Statement stmt, String counterName) {
         if (stmt instanceof ExpressionStmt) {
@@ -425,7 +440,7 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
                     if (value instanceof MethodCallExpr) {
                         MethodCallExpr methodCall = (MethodCallExpr) value;
                         return methodCall.getNameAsString().equals("_inc2") ||
-                               methodCall.getNameAsString().equals("_inc");
+                                methodCall.getNameAsString().equals("_inc");
                     }
                 }
             }
@@ -445,7 +460,8 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
                 String targetStr = assign.getTarget().toString().trim();
                 String valueStr = assign.getValue().toString().trim();
                 // Pattern: simpleVar = this._Something or simpleVar = this.something
-                // where simpleVar is a simple name (likely a loop counter like l, l2, jVar2, counter1)
+                // where simpleVar is a simple name (likely a loop counter like l, l2, jVar2,
+                // counter1)
                 if (targetStr.matches("[a-zA-Z]+\\d*") && valueStr.startsWith("this.")) {
                     return true;
                 }
@@ -468,7 +484,7 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
                     // Check if this IF contains a break
                     if (containsBreak(ifStmt.getThenStmt())) {
                         Expression condition = ifStmt.getCondition();
-                        
+
                         // TAFJ pattern: if (_isBreak_ || !boolVal(actualCondition)) break;
                         // Detect OR expression: left || right
                         if (condition instanceof BinaryExpr) {
@@ -483,7 +499,8 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
                                         // inner could be boolVal(actualCondition) or just actualCondition
                                         if (inner instanceof MethodCallExpr) {
                                             MethodCallExpr innerCall = (MethodCallExpr) inner;
-                                            if (innerCall.getNameAsString().equals("boolVal") && innerCall.getArguments().size() > 0) {
+                                            if (innerCall.getNameAsString().equals("boolVal")
+                                                    && innerCall.getArguments().size() > 0) {
                                                 // Extract from boolVal
                                                 return convertCondition(innerCall.getArgument(0));
                                             }
@@ -494,7 +511,7 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
                                 }
                             }
                         }
-                        
+
                         // Fallback: negate the whole break condition
                         String breakCondition = convertCondition(condition);
                         return "!(" + breakCondition + ")";
@@ -520,17 +537,20 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
      * Check if statement or its children contain a break
      */
     private boolean containsBreak(Statement stmt) {
-        if (stmt instanceof BreakStmt) return true;
+        if (stmt instanceof BreakStmt)
+            return true;
         if (stmt instanceof BlockStmt) {
             for (Statement s : ((BlockStmt) stmt).getStatements()) {
-                if (containsBreak(s)) return true;
+                if (containsBreak(s))
+                    return true;
             }
         }
         return false;
     }
 
     /**
-     * Check if statement is TAFJ loop control boilerplate (_loop_, _isBreak_, _isContinue_ assignments)
+     * Check if statement is TAFJ loop control boilerplate (_loop_, _isBreak_,
+     * _isContinue_ assignments)
      */
     private boolean isTafjLoopBoilerplate(Statement stmt) {
         if (stmt instanceof ExpressionStmt) {
@@ -560,8 +580,8 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
         // Skip TAFJ infrastructure returns
         if (n.getExpression().isPresent()) {
             String exprStr = n.getExpression().get().toString();
-            if (exprStr.contains("_Sys_PostGlobus") || 
-                exprStr.contains("_Sys_ReturnTo")) {
+            if (exprStr.contains("_Sys_PostGlobus") ||
+                    exprStr.contains("_Sys_ReturnTo")) {
                 return;
             }
         }
@@ -573,19 +593,21 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
         Expression expr = n.getExpression();
 
         /*
-        // Skip TAFJ loop boilerplate assignments after WHILE loop conversion
-        // These are: _loop_ = true, _isBreak_ = false, _isContinue_ = false
-        if (expr instanceof AssignExpr) {
-            AssignExpr assign = (AssignExpr) expr;
-            String targetStr = assign.getTarget().toString();
-            if (targetStr.contains("_loop_") || targetStr.contains("_isBreak_") || targetStr.contains("_isContinue_")) {
-                // Skip these boilerplate assignments
-                return;
-            }
-        }
-            */
+         * // Skip TAFJ loop boilerplate assignments after WHILE loop conversion
+         * // These are: _loop_ = true, _isBreak_ = false, _isContinue_ = false
+         * if (expr instanceof AssignExpr) {
+         * AssignExpr assign = (AssignExpr) expr;
+         * String targetStr = assign.getTarget().toString();
+         * if (targetStr.contains("_loop_") || targetStr.contains("_isBreak_") ||
+         * targetStr.contains("_isContinue_")) {
+         * // Skip these boilerplate assignments
+         * return;
+         * }
+         * }
+         */
 
-        // Track variable assignments from method calls: Type var = this.getComponent().method();
+        // Track variable assignments from method calls: Type var =
+        // this.getComponent().method();
         if (expr instanceof VariableDeclarationExpr) {
             VariableDeclarationExpr varDecl = (VariableDeclarationExpr) expr;
             if (varDecl.getVariables().size() == 1) {
@@ -627,7 +649,7 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
                 }
             }
         }
-        
+
         // Track array element assignments: array[i] = value
         if (expr instanceof AssignExpr) {
             AssignExpr assign = (AssignExpr) expr;
@@ -637,17 +659,17 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
                 // Skip TAFJ loop boilerplate assignments after WHILE loop conversion
                 return;
             }
-            
+
             // Check if target is an array access: array[index] or this.array[index]
             Expression arrayNameExpr = null;
             Expression indexExpr = null;
-            
+
             if (target instanceof ArrayAccessExpr) {
                 ArrayAccessExpr arrayAccess = (ArrayAccessExpr) target;
                 arrayNameExpr = arrayAccess.getName();
                 indexExpr = arrayAccess.getIndex();
-            } 
-            
+            }
+
             if (arrayNameExpr != null && indexExpr != null) {
                 String arrayName = arrayNameExpr.toString().trim();
                 String indexStr = indexExpr.toString().trim();
@@ -675,7 +697,7 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
                 }
             }
         }
-        
+
         if (expr instanceof MethodCallExpr) {
             MethodCallExpr methodCall = (MethodCallExpr) expr;
             String methodName = methodCall.getNameAsString();
@@ -724,7 +746,8 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
                                 String fieldStr = patternMatcher.convertFieldExpression(fGetCall.getArgument(i));
                                 // Skip 0 values
                                 if (!fieldStr.equals("0")) {
-                                    if (fieldList.length() > 0) fieldList.append(",");
+                                    if (fieldList.length() > 0)
+                                        fieldList.append(",");
                                     fieldList.append(fieldStr);
                                 }
                             }
@@ -752,14 +775,15 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
                             // Check if first argument is a get() call with array contents tracking
                             Expression firstArgExpr = fieldCall.getArgument(0);
                             String firstArg;
-                            
+
                             if (firstArgExpr instanceof MethodCallExpr) {
                                 MethodCallExpr innerGetCall = (MethodCallExpr) firstArgExpr;
-                                if ((innerGetCall.getNameAsString().equals("get") || innerGetCall.getNameAsString().equals("fGet")) 
-                                    && innerGetCall.getArguments().size() >= 2) {
+                                if ((innerGetCall.getNameAsString().equals("get")
+                                        || innerGetCall.getNameAsString().equals("fGet"))
+                                        && innerGetCall.getArguments().size() >= 2) {
                                     Expression innerArrayExpr = innerGetCall.getArgument(0);
                                     Expression innerFieldExpr = innerGetCall.getArgument(1);
-                                    
+
                                     // Check if second argument is a tracked array from indexed assignments
                                     if (innerFieldExpr instanceof NameExpr && arrayContents != null) {
                                         String varName = ((NameExpr) innerFieldExpr).getNameAsString();
@@ -769,12 +793,14 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
                                             for (int i = 0; i < fields.size(); i++) {
                                                 String field = fields.get(i);
                                                 if (!field.equals("0") && !field.isEmpty()) {
-                                                    if (fieldList.length() > 0) fieldList.append(",");
+                                                    if (fieldList.length() > 0)
+                                                        fieldList.append(",");
                                                     fieldList.append(field);
                                                 }
                                             }
-                                            
-                                            String innerArrayConverted = patternMatcher.convertExpression(innerArrayExpr);
+
+                                            String innerArrayConverted = patternMatcher
+                                                    .convertExpression(innerArrayExpr);
                                             if (fieldList.length() > 0) {
                                                 firstArg = innerArrayConverted + "<" + fieldList.toString() + ">";
                                             } else {
@@ -810,14 +836,16 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
                 }
 
                 // Check if set() contains get() with an array variable or tracked variable
-                // Use PatternMatcher with arrayContents to handle nested get() calls (e.g., inside FIELD)
+                // Use PatternMatcher with arrayContents to handle nested get() calls (e.g.,
+                // inside FIELD)
                 if (argCount >= 2) {
                     Expression valueArg = methodCall.getArgument(argCount - 1);
                     if (valueArg instanceof MethodCallExpr) {
                         MethodCallExpr getCall = (MethodCallExpr) valueArg;
                         String getMethodName = getCall.getNameAsString();
                         // Check if value is a get() call with an array variable that can be expanded
-                        if ((getMethodName.equals("get") || getMethodName.equals("fGet")) && getCall.getArguments().size() >= 2) {
+                        if ((getMethodName.equals("get") || getMethodName.equals("fGet"))
+                                && getCall.getArguments().size() >= 2) {
                             Expression arrayExpr = getCall.getArgument(0);
                             Expression fieldExpr = getCall.getArgument(1);
 
@@ -838,7 +866,8 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
                                     String fieldStr = patternMatcher.convertFieldExpression(getCall.getArgument(i));
                                     // Skip 0 values
                                     if (!fieldStr.equals("0")) {
-                                        if (fieldList.length() > 0) fieldList.append(",");
+                                        if (fieldList.length() > 0)
+                                            fieldList.append(",");
                                         fieldList.append(fieldStr);
                                     }
                                 }
@@ -853,7 +882,8 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
                                 return;
                             }
 
-                            // Check if second argument is a tracked array from indexed assignments (objectArray2 pattern)
+                            // Check if second argument is a tracked array from indexed assignments
+                            // (objectArray2 pattern)
                             if (fieldExpr instanceof NameExpr && arrayContents != null) {
                                 String varName = ((NameExpr) fieldExpr).getNameAsString();
                                 if (arrayContents.containsKey(varName)) {
@@ -863,7 +893,8 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
                                     for (int i = 0; i < fields.size(); i++) {
                                         String field = fields.get(i);
                                         if (!field.equals("0") && !field.isEmpty()) {
-                                            if (fieldList.length() > 0) fieldList.append(",");
+                                            if (fieldList.length() > 0)
+                                                fieldList.append(",");
                                             fieldList.append(field);
                                         }
                                     }
@@ -894,12 +925,49 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
                 }
             }
 
+            // --- NEW LOGIC TO HANDLE OPF/SERVICE CALLS ---
+            if (methodName.equals("invoke")) {
+                // Check for the pattern: service.invoke(new Object[]{arg1, arg2})
+
+                if (methodCall.getArguments().size() >= 1) {
+                    Expression firstArg = methodCall.getArgument(0);
+                    if (firstArg instanceof Expression || firstArg instanceof AssignExpr) {
+                        // This might be the component selector string, e.g., new String[]{"OPF"} or
+                        // similar setup.
+
+                        String scope = methodCall.getScope().toString();
+                        scope = scope.startsWith("Optional[") ? scope.substring(9) : scope;
+
+                        String serviceName = scope.substring(0, scope.indexOf("_cl.INSTANCE"))
+                                .replaceAll("_\\d+_cl", "").replaceAll("_cl", "").replace("_", ".");
+                        ;
+
+                        // Convert arguments to JBC format: FN.SEAT.RESULTS, F.SEAT.RESULTS
+                        StringBuilder argList = new StringBuilder();
+                        for (int i = 0; i < methodCall.getArguments().size(); i++) {
+                            String convertedArg = convertExpression(methodCall.getArgument(i));
+                            if (convertedArg != null && !convertedArg.isEmpty()) {
+                                if (argList.length() > 0)
+                                    argList.append(", ");
+                                argList.append(convertedArg);
+                            }
+                        }
+
+                        // Emit the CALL statement
+                        String assignment = "CALL " + serviceName + "(" + argList.toString() + ")";
+                        appendIndented(assignment + "\n");
+                        return;
+
+                    }
+                }
+            }
+
             // Handle DEBUG
             if (methodName.equals("DEBUG")) {
                 appendIndented("DEBUG\n");
                 return;
             }
-            
+
             // Handle other method calls (e.g., component method calls)
             String jbcEquivalent = patternMatcher.convertMethodCall(methodCall);
             if (jbcEquivalent != null && !jbcEquivalent.isEmpty()) {
@@ -922,12 +990,12 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
     @Override
     public void visit(MethodCallExpr n, StringBuilder arg) {
         String methodName = n.getNameAsString();
-        
+
         // Skip TAFJ line number markers: _l(...)
         if (methodName.equals("_l")) {
             return;
         }
-        
+
         // Convert TAFJ runtime calls to JBC
         String jbcEquivalent = patternMatcher.convertMethodCall(n);
 
@@ -941,10 +1009,10 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
     public void visit(VariableDeclarationExpr n, StringBuilder arg) {
         // JBC doesn't need explicit variable declarations
         // Add as comment for reference
-//        String varName = n.getVariables().get(0).getNameAsString();
-//        String jbcVarName = patternMatcher.convertVariableName(varName);
-//        appendIndented("* VAR: " + jbcVarName + "\n");
-//        super.visit(n, arg);
+        // String varName = n.getVariables().get(0).getNameAsString();
+        // String jbcVarName = patternMatcher.convertVariableName(varName);
+        // appendIndented("* VAR: " + jbcVarName + "\n");
+        // super.visit(n, arg);
     }
 
     @Override
@@ -955,7 +1023,8 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
 
     @Override
     public void visit(IntegerLiteralExpr n, StringBuilder arg) {
-        // Skip integer literals - they're usually from _l() calls or other TAFJ boilerplate
+        // Skip integer literals - they're usually from _l() calls or other TAFJ
+        // boilerplate
         // Don't output raw integers
     }
 
@@ -980,7 +1049,7 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
     }
 
     private String convertCondition(Expression condition) {
-//        System.out.println("convertCondition :" + condition.toString());
+        // System.out.println("convertCondition :" + condition.toString());
         if (condition instanceof MethodCallExpr) {
             MethodCallExpr methodCall = (MethodCallExpr) condition;
             String methodName = methodCall.getNameAsString();
@@ -993,32 +1062,32 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
                     String opName = opMethod.getNameAsString();
 
                     switch (opName) {
-                    case "op_equal":
-                        return patternMatcher.convertBinaryOp(opMethod, "EQ");
-                    case "op_ne":
-                        return patternMatcher.convertBinaryOp(opMethod, "NE");
-                    case "op_gt":
-                        return patternMatcher.convertBinaryOp(opMethod, "GT");
-                    case "op_lt":
-                        return patternMatcher.convertBinaryOp(opMethod, "LT");
-                    case "op_ge":
-                        return patternMatcher.convertBinaryOp(opMethod, "GE");
-                    case "op_le":
-                        return patternMatcher.convertBinaryOp(opMethod, "LE");
-                    case "op_match":
-                        return patternMatcher.convertBinaryOp(opMethod, "MATCHES");
-                    case "op_and":
-                        // op_and(A, B) → A AND B
-                        return convertBinaryOpWithAnd(opMethod);
-                    case "op_or":
-                        // op_or(A, B) → A OR B
-                        return convertBinaryOpWithOr(opMethod);
-                    case "NOT":
-                        // NOT(expr) → NOT(expr)
-                        return "NOT(" + convertCondition(opMethod.getArgument(0)) + ")";
-                    default:
-                        // For other boolVal wrapped expressions, convert the inner expression
-                        return patternMatcher.convertExpression(inner);
+                        case "op_equal":
+                            return patternMatcher.convertBinaryOp(opMethod, "EQ");
+                        case "op_ne":
+                            return patternMatcher.convertBinaryOp(opMethod, "NE");
+                        case "op_gt":
+                            return patternMatcher.convertBinaryOp(opMethod, "GT");
+                        case "op_lt":
+                            return patternMatcher.convertBinaryOp(opMethod, "LT");
+                        case "op_ge":
+                            return patternMatcher.convertBinaryOp(opMethod, "GE");
+                        case "op_le":
+                            return patternMatcher.convertBinaryOp(opMethod, "LE");
+                        case "op_match":
+                            return patternMatcher.convertBinaryOp(opMethod, "MATCHES");
+                        case "op_and":
+                            // op_and(A, B) → A AND B
+                            return convertBinaryOpWithAnd(opMethod);
+                        case "op_or":
+                            // op_or(A, B) → A OR B
+                            return convertBinaryOpWithOr(opMethod);
+                        case "NOT":
+                            // NOT(expr) → NOT(expr)
+                            return "NOT(" + convertCondition(opMethod.getArgument(0)) + ")";
+                        default:
+                            // For other boolVal wrapped expressions, convert the inner expression
+                            return patternMatcher.convertExpression(inner);
                     }
                 }
             } else if (methodName.equals("op_and")) {
@@ -1054,14 +1123,16 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
     }
 
     private String convertBinaryOpWithAnd(MethodCallExpr opMethod) {
-        if (opMethod.getArguments().size() < 2) return "";
+        if (opMethod.getArguments().size() < 2)
+            return "";
         String left = convertConditionWithTrackedVariables(opMethod.getArgument(0));
         String right = convertConditionWithTrackedVariables(opMethod.getArgument(1));
         return left + " AND " + right;
     }
 
     private String convertBinaryOpWithOr(MethodCallExpr opMethod) {
-        if (opMethod.getArguments().size() < 2) return "";
+        if (opMethod.getArguments().size() < 2)
+            return "";
         String left = convertConditionWithTrackedVariables(opMethod.getArgument(0));
         String right = convertConditionWithTrackedVariables(opMethod.getArgument(1));
         return left + " OR " + right;
@@ -1091,7 +1162,8 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
             if (methodName.equals("FIELD")) {
                 StringBuilder argsBuilder = new StringBuilder();
                 for (int i = 0; i < methodCall.getArguments().size(); i++) {
-                    if (i > 0) argsBuilder.append(", ");
+                    if (i > 0)
+                        argsBuilder.append(", ");
                     Expression arg = methodCall.getArgument(i);
                     // Recursively expand tracked variables in arguments
                     String expandedArg = expandTrackedVariable(arg);
@@ -1100,7 +1172,8 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
                 return methodName + "(" + argsBuilder.toString() + ")";
             }
 
-            // For get() and fGet() - convert to JBC array access syntax with tracked variable expansion
+            // For get() and fGet() - convert to JBC array access syntax with tracked
+            // variable expansion
             if (methodName.equals("get") || methodName.equals("fGet")) {
                 int argCount = methodCall.getArguments().size();
                 if (argCount < 2) {
@@ -1111,17 +1184,18 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
                 Expression arrayExpr = methodCall.getArgument(0);
                 String arrayStr = expandTrackedVariable(arrayExpr);
 
-                // Check if this is multi-value array access (4 arguments: array, mv, sv, default)
+                // Check if this is multi-value array access (4 arguments: array, mv, sv,
+                // default)
                 if (argCount >= 3) {
                     Expression arg1Expr = methodCall.getArgument(1);
                     boolean isComponentRef = arg1Expr.toString().startsWith("component_") ||
-                                             arg1Expr instanceof FieldAccessExpr ||
-                                             arg1Expr instanceof MethodCallExpr;
+                            arg1Expr instanceof FieldAccessExpr ||
+                            arg1Expr instanceof MethodCallExpr;
 
                     if (!isComponentRef &&
-                        (arg1Expr instanceof IntegerLiteralExpr ||
-                         arg1Expr instanceof LongLiteralExpr ||
-                         arg1Expr instanceof NameExpr)) {
+                            (arg1Expr instanceof IntegerLiteralExpr ||
+                                    arg1Expr instanceof LongLiteralExpr ||
+                                    arg1Expr instanceof NameExpr)) {
                         // Multi-value access: get(array, mv, sv, default) → array<mv,sv>
                         String mv = expandTrackedVariable(methodCall.getArgument(1));
                         String sv = expandTrackedVariable(methodCall.getArgument(2));
@@ -1131,7 +1205,8 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
                             fields.append(mv);
                         }
                         if (!sv.equals("0")) {
-                            if (fields.length() > 0) fields.append(",");
+                            if (fields.length() > 0)
+                                fields.append(",");
                             fields.append(sv);
                         }
 
@@ -1141,16 +1216,18 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
                             return arrayStr;
                         }
                     } else if (isComponentRef && argCount >= 4) {
-                        // Field reference with multi-value index: get(array, field, mv, default) → array<field,mv>
+                        // Field reference with multi-value index: get(array, field, mv, default) →
+                        // array<field,mv>
                         String field = expandTrackedVariable(methodCall.getArgument(1));
                         String mv = expandTrackedVariable(methodCall.getArgument(2));
-                        
+
                         StringBuilder fields = new StringBuilder();
                         if (!field.equals("0")) {
                             fields.append(field);
                         }
                         if (!mv.equals("0")) {
-                            if (fields.length() > 0) fields.append(",");
+                            if (fields.length() > 0)
+                                fields.append(",");
                             fields.append(mv);
                         }
 
@@ -1169,8 +1246,8 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
 
             // For comparison ops - recursively expand tracked variables in arguments
             if (methodName.equals("op_equal") || methodName.equals("op_ne") || methodName.equals("op_gt") ||
-                methodName.equals("op_lt") || methodName.equals("op_ge") || methodName.equals("op_le") ||
-                methodName.equals("op_match")) {
+                    methodName.equals("op_lt") || methodName.equals("op_ge") || methodName.equals("op_le") ||
+                    methodName.equals("op_match")) {
                 String jbcOp = methodName.substring(3).toUpperCase().replace("EQUAL", "EQ");
                 String left = expandTrackedVariable(methodCall.getArgument(0));
                 String right = expandTrackedVariable(methodCall.getArgument(1));
@@ -1210,17 +1287,18 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
                 Expression arrayExpr = methodCall.getArgument(0);
                 String arrayStr = expandTrackedVariable(arrayExpr);
 
-                // Check if this is multi-value array access (4 arguments: array, mv, sv, default)
+                // Check if this is multi-value array access (4 arguments: array, mv, sv,
+                // default)
                 if (argCount >= 3) {
                     Expression arg1Expr = methodCall.getArgument(1);
                     boolean isComponentRef = arg1Expr.toString().startsWith("component_") ||
-                                             arg1Expr instanceof FieldAccessExpr ||
-                                             arg1Expr instanceof MethodCallExpr;
+                            arg1Expr instanceof FieldAccessExpr ||
+                            arg1Expr instanceof MethodCallExpr;
 
                     if (!isComponentRef &&
-                        (arg1Expr instanceof IntegerLiteralExpr ||
-                         arg1Expr instanceof LongLiteralExpr ||
-                         arg1Expr instanceof NameExpr)) {
+                            (arg1Expr instanceof IntegerLiteralExpr ||
+                                    arg1Expr instanceof LongLiteralExpr ||
+                                    arg1Expr instanceof NameExpr)) {
                         // Multi-value access: get(array, mv, sv, default) → array<mv,sv>
                         String mv = expandTrackedVariable(methodCall.getArgument(1));
                         String sv = expandTrackedVariable(methodCall.getArgument(2));
@@ -1230,7 +1308,8 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
                             fields.append(mv);
                         }
                         if (!sv.equals("0")) {
-                            if (fields.length() > 0) fields.append(",");
+                            if (fields.length() > 0)
+                                fields.append(",");
                             fields.append(sv);
                         }
 
@@ -1240,16 +1319,18 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
                             return arrayStr;
                         }
                     } else if (isComponentRef && argCount >= 4) {
-                        // Field reference with multi-value index: get(array, field, mv, default) → array<field,mv>
+                        // Field reference with multi-value index: get(array, field, mv, default) →
+                        // array<field,mv>
                         String field = expandTrackedVariable(methodCall.getArgument(1));
                         String mv = expandTrackedVariable(methodCall.getArgument(2));
-                        
+
                         StringBuilder fields = new StringBuilder();
                         if (!field.equals("0")) {
                             fields.append(field);
                         }
                         if (!mv.equals("0")) {
-                            if (fields.length() > 0) fields.append(",");
+                            if (fields.length() > 0)
+                                fields.append(",");
                             fields.append(mv);
                         }
 
@@ -1270,7 +1351,8 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
             if (methodName.equals("FIELD")) {
                 StringBuilder argsBuilder = new StringBuilder();
                 for (int i = 0; i < methodCall.getArguments().size(); i++) {
-                    if (i > 0) argsBuilder.append(", ");
+                    if (i > 0)
+                        argsBuilder.append(", ");
                     Expression innerArg = methodCall.getArgument(i);
                     String expandedArg = expandTrackedVariable(innerArg);
                     argsBuilder.append(expandedArg);
@@ -1281,21 +1363,22 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
         // Normal conversion
         return patternMatcher.convertExpression(arg);
     }
+
     private String convertAssignment(AssignExpr assignExpr) {
-//        System.out.println("convertAssignment :" + assignExpr.toString());
+        // System.out.println("convertAssignment :" + assignExpr.toString());
 
         Expression target = assignExpr.getTarget();
         Expression value = assignExpr.getValue();
 
         String targetStr = convertExpression(target);
         String valueStr = convertExpression(value);
-        
+
         // Skip TAFJ infrastructure assignments
-        if (targetStr.contains("Sys.PostGlobus") || 
-            targetStr.equals("this._Sys_PostGlobus")) {
+        if (targetStr.contains("Sys.PostGlobus") ||
+                targetStr.equals("this._Sys_PostGlobus")) {
             return "";
-        } else if (targetStr.contains("Sys.ReturnTo") || 
-                   targetStr.equals("this._Sys_ReturnTo")) {
+        } else if (targetStr.contains("Sys.ReturnTo") ||
+                targetStr.equals("this._Sys_ReturnTo")) {
             return "";
         } else {
             return targetStr + " = " + valueStr;
@@ -1303,44 +1386,66 @@ public class JbcVisitor extends VoidVisitorAdapter<StringBuilder> {
     }
 
     private String convertExpression(Expression expr) {
-    if (expr instanceof NameExpr) {
-        String name = ((NameExpr) expr).getNameAsString();
-        return patternMatcher.convertVariableName(name);
-    } else if (expr instanceof MethodCallExpr) {
-        return patternMatcher.convertMethodCall((MethodCallExpr) expr);
-    } else if (expr instanceof StringLiteralExpr) {
-        return "\"" + ((StringLiteralExpr) expr).getValue() + "\"";
-    } else if (expr instanceof IntegerLiteralExpr) {
-        return ((IntegerLiteralExpr) expr).getValue();
-    } else if (expr instanceof FieldAccessExpr) {
-        // Delegate to PatternMatcher for proper FieldAccessExpr handling (this._VAR, etc.)
-        return patternMatcher.convertExpression(expr);
-    } else if (expr instanceof BooleanLiteralExpr) {
-        return ((BooleanLiteralExpr) expr).getValue() ? "1" : "0";
-    } else if (expr instanceof UnaryExpr) {
-        // Handle negation: !expr
-        UnaryExpr unary = (UnaryExpr) expr;
-        String inner = convertExpression(unary.getExpression());
-        if (unary.getOperator() == UnaryExpr.Operator.LOGICAL_COMPLEMENT) {
-            return "!(" + inner + ")";
+        if (expr instanceof NameExpr) {
+            String name = ((NameExpr) expr).getNameAsString();
+            return patternMatcher.convertVariableName(name);
+        } else if (expr instanceof MethodCallExpr) {
+            return patternMatcher.convertMethodCall((MethodCallExpr) expr);
+        } else if (expr instanceof StringLiteralExpr) {
+            return "\"" + ((StringLiteralExpr) expr).getValue() + "\"";
+        } else if (expr instanceof IntegerLiteralExpr) {
+            return ((IntegerLiteralExpr) expr).getValue();
+        } else if (expr instanceof FieldAccessExpr) {
+            // Delegate to PatternMatcher for proper FieldAccessExpr handling (this._VAR,
+            // etc.)
+            return patternMatcher.convertExpression(expr);
+        } else if (expr instanceof BooleanLiteralExpr) {
+            return ((BooleanLiteralExpr) expr).getValue() ? "1" : "0";
+        } else if (expr instanceof UnaryExpr) {
+            // Handle negation: !expr
+            UnaryExpr unary = (UnaryExpr) expr;
+            String inner = convertExpression(unary.getExpression());
+            if (unary.getOperator() == UnaryExpr.Operator.LOGICAL_COMPLEMENT) {
+                return "!(" + inner + ")";
+            }
+            return expr.toString();
+        } else if (expr instanceof BinaryExpr) {
+            // Handle || (OR) and && (AND) operators
+            BinaryExpr binary = (BinaryExpr) expr;
+            String left = convertExpression(binary.getLeft());
+            String right = convertExpression(binary.getRight());
+            switch (binary.getOperator()) {
+                case BINARY_OR:
+                    return left + " OR " + right;
+                case BINARY_AND:
+                    return left + " AND " + right;
+                case EQUALS:
+                    return left + " EQ " + right;
+                case NOT_EQUALS:
+                    return left + " NE " + right;
+                default:
+                    return expr.toString();
+            }
+        } else if (expr instanceof ArrayCreationExpr) {
+            // Handle new Object[] { ... } structures by converting elements
+            ArrayCreationExpr array = (ArrayCreationExpr) expr;
+            StringBuilder sb = new StringBuilder();
+
+            array.getInitializer().ifPresent(initializer -> {
+                for (Expression element : initializer.getValues()) {
+                    String convertedElement = convertExpression(element);
+                    if (sb.length() > 0 && !convertedElement.isEmpty()) {
+                        sb.append(", ");
+                    }
+                    sb.append(convertedElement);
+                }
+            });
+
+            return sb.toString();
+        } else {
+            return expr.toString();
         }
-        return expr.toString();
-    } else if (expr instanceof BinaryExpr) {
-        // Handle || (OR) and && (AND) operators
-        BinaryExpr binary = (BinaryExpr) expr;
-        String left = convertExpression(binary.getLeft());
-        String right = convertExpression(binary.getRight());
-        switch (binary.getOperator()) {
-            case BINARY_OR: return left + " OR " + right;
-            case BINARY_AND: return left + " AND " + right;
-            case EQUALS: return left + " EQ " + right;
-            case NOT_EQUALS: return left + " NE " + right;
-            default: return expr.toString();
-        }
-    } else {
-        return expr.toString();
     }
-}
 
     private void appendIndented(String text) {
         if (text.startsWith("\n"))

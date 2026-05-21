@@ -1,0 +1,6 @@
+com\tafj\reverse\translator\LocateSwitchTest.class
+com\tafj\reverse\translator\TrackedVariableExpansionTest.class
+com\tafj\reverse\translator\WhileConditionTest.class
+com\tafj\reverse\translator\DoWhileLoopTest.class
+com\tafj\reverse\translator\PatternMatcherTest.class
+com\tafj\reverse\translator\SubroutineNameTest.class

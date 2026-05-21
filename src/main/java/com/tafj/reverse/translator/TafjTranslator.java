@@ -158,7 +158,6 @@ public class TafjTranslator {
         String baseName = "";
     }
 
-
     /**
      * Post-process generated JBC for formatting
      */
@@ -179,7 +178,7 @@ public class TafjTranslator {
 
         // Remove dummy component methods
         for (String component : componentList) {
-            formatted = formatted.replaceAll("\s*"+ component + "\\(\\)\s*", "");
+            formatted = formatted.replaceAll("\s*" + component + "\\(\\)\s*", "");
         }
 
         // Remove multiple consecutive blank lines
